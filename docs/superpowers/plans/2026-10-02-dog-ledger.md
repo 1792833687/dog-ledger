@@ -2301,6 +2301,10 @@ export function DogsPage() {
   const [openBatchId, setOpenBatchId] = useState<string | null>(null)
   const [sellingDogId, setSellingDogId] = useState<string | null>(null)
   const [priceInput, setPriceInput] = useState('')
+  const [expenseOpen, setExpenseOpen] = useState(false)
+  const [expenseAmount, setExpenseAmount] = useState('')
+  const [expenseCategory, setExpenseCategory] = useState('medical')
+  const [expenseNote, setExpenseNote] = useState('')
   const [newBatchName, setNewBatchName] = useState('')
 
   const today = new Date().toISOString().slice(0, 10)
@@ -2472,14 +2476,10 @@ export function DogsPage() {
         type="button"
         className="mt-2 w-full rounded-xl border border-gray-300 py-3 text-sm font-semibold text-gray-700"
         onClick={() => {
-          const amount = parseMoney(window.prompt('这笔支出多少钱（元）？') ?? '')
-          if (amount === null) return
-          const category = window.prompt('成本项（purchase 收购价 / transport 运输 / medical 疫苗医疗 / aftercare_refund 售后退款）', 'medical') ?? 'medical'
-          void update(d => addExpense(d, {
-            batchId: batch.id, dogId: null, category, amount,
-            paidBy: 'pool', date: today,
-            note: window.prompt('备注（可留空）') ?? '',
-          }))
+          setExpenseAmount('')
+          setExpenseCategory('medical')
+          setExpenseNote('')
+          setExpenseOpen(true)
         }}
       >
         + 记一笔批次支出
@@ -2512,12 +2512,58 @@ export function DogsPage() {
           确认卖出
         </button>
       </Modal>
+
+      <Modal open={expenseOpen} title="记一笔批次支出" onClose={() => setExpenseOpen(false)}>
+        <input
+          autoFocus
+          className="w-full rounded-lg bg-gray-100 px-3 py-2 text-lg outline-none"
+          inputMode="decimal"
+          placeholder="金额（元）"
+          value={expenseAmount}
+          onChange={e => setExpenseAmount(e.target.value)}
+        />
+
+        <select
+          className="mt-2 w-full rounded-lg bg-gray-100 px-3 py-2 text-sm"
+          value={expenseCategory}
+          onChange={e => setExpenseCategory(e.target.value)}
+        >
+          {data.settings.costItems.map(c => (
+            <option key={c.id} value={c.id}>{c.name}</option>
+          ))}
+        </select>
+
+        <input
+          className="mt-2 w-full rounded-lg bg-gray-100 px-3 py-2 text-sm outline-none"
+          placeholder="备注（可留空）"
+          value={expenseNote}
+          onChange={e => setExpenseNote(e.target.value)}
+        />
+
+        <button
+          type="button"
+          className="mt-3 w-full rounded-xl bg-gray-900 py-3 text-sm font-semibold text-white disabled:opacity-40"
+          disabled={parseMoney(expenseAmount) === null}
+          onClick={() => {
+            const amount = parseMoney(expenseAmount)!
+            void update(d => addExpense(d, {
+              batchId: batch.id, dogId: null, category: expenseCategory, amount,
+              paidBy: 'pool', date: today, note: expenseNote,
+            }))
+            setExpenseOpen(false)
+          }}
+        >
+          记下
+        </button>
+      </Modal>
     </div>
   )
 }
 ```
 
-`window.prompt` 只是第一版能用的最简实现（YAGNI）；后续要美化再替换成 Modal。
+「+ 记一笔批次支出」和「卖出」都用同一个 `Modal` + 中文表单，**不用 `window.prompt`**。原因：记账是这个软件最高频的动作，弹三个系统框、还要用户手打英文成本项（`purchase`/`transport`/`medical`），第二天就不会有人再记了——这同时违反 Global Constraints 的「界面文案中文」和设计文档的成功标准「录一笔支出不超过 3 次点击」。成本项下拉直接读 `data.settings.costItems`，和 Task 11「钱」页面的记账弹窗保持同一套选项。
+
+注意：这个按钮固定记 `paidBy: 'pool'`（池子直付）。**合伙人先垫付的支出要去「钱」页面记**（Task 11 的记账弹窗里有「XX 先垫付」下拉）。这是有意的取舍——垫付是将来要从池子还给人家的钱，值得多走一步确认，不适合混进批次页的随手记账。
 
 - [ ] **Step 7: 验证**
 
@@ -3554,11 +3600,14 @@ import { useRef, useState } from 'react'
 import { useAppData } from '../../state/AppDataContext'
 import { exportBackup, importBackup } from '../../storage/backup'
 import { daysSinceBackup } from '../backupStatus'
+import { Modal } from '../components/Modal'
+import type { AppData } from '../../domain/types'
 
 export function BackupPanel() {
   const { data, update, replaceAll } = useAppData()
   const fileInput = useRef<HTMLInputElement>(null)
   const [message, setMessage] = useState('')
+  const [pendingRestore, setPendingRestore] = useState<AppData | null>(null)
 
   const days = daysSinceBackup(data.settings.lastBackupAt, new Date())
 
@@ -3579,10 +3628,7 @@ export function BackupPanel() {
   async function handleImport(file: File) {
     try {
       const restored = importBackup(await file.text())
-      const count = restored.entries.length
-      if (!window.confirm(`将用备份覆盖当前全部数据（备份里有 ${count} 条流水）。继续？`)) return
-      replaceAll(restored)
-      setMessage(`恢复成功，共 ${count} 条流水。`)
+      setPendingRestore(restored)
     } catch (e) {
       setMessage(e instanceof Error ? e.message : '恢复失败')
     }
@@ -3627,6 +3673,32 @@ export function BackupPanel() {
       <p className="mt-2 text-xs text-gray-400">
         恢复前会先问一次。导出后请马上把文件发到微信「文件传输助手」或存进电脑。
       </p>
+
+      <Modal open={pendingRestore !== null} title="恢复备份？" onClose={() => setPendingRestore(null)}>
+        <p className="text-sm text-gray-600">
+          将用备份覆盖当前全部数据（备份里有 {pendingRestore?.entries.length ?? 0} 条流水、
+          {pendingRestore?.dogs.length ?? 0} 只狗）。这台设备上的现有数据会被全部替换，撤销不了。
+        </p>
+        <button
+          type="button"
+          className="mt-3 w-full rounded-xl bg-red-600 py-3 text-sm font-semibold text-white"
+          onClick={() => {
+            const restored = pendingRestore!
+            replaceAll(restored)
+            setPendingRestore(null)
+            setMessage(`恢复成功，共 ${restored.entries.length} 条流水。`)
+          }}
+        >
+          确认覆盖
+        </button>
+        <button
+          type="button"
+          className="mt-2 w-full rounded-xl border border-gray-300 py-3 text-sm font-semibold text-gray-700"
+          onClick={() => setPendingRestore(null)}
+        >
+          取消
+        </button>
+      </Modal>
     </section>
   )
 }
