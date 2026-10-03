@@ -271,16 +271,26 @@ claimable(partnerId)  = (netProfit 累计 × shareRatio(partnerId)) − distribu
 - `rabiesWaitDays`（默认 21）—— 免疫后需等待的天数。⚠️ **这个 21 不是法定天数**：2026-10-02 取到《犬产地检疫规程》与《狂犬病防治技术规范》两份官方原文后复核，**两份文件里都没有「21 天」**（规程只说「在有效保护期内」，技术规范只说「每年加强免疫一次」）。它更可能是抗体检测的实验室采样窗口要求。做成可配置就是为了让你问清之后改，而不是让软件替你猜。详见 `docs/compliance/2026-10-02-犬只交易合规要点-法规篇.md` §2.9。
 - `quarantineLeadDays`（默认 3）—— 申报检疫需提前的天数，《动物检疫管理办法》第八条第二款。
 
-**每只狗由这 6 个字段推导出一个阶段**（纯函数，`domain/quarantine.ts`）：
+**每只狗由这 6 个字段推导出一个阶段**（纯函数，`domain/quarantine.ts`）。
 
-| 阶段 | 判定 | 下一步该做什么 |
-|---|---|---|
-| `unvaccinated` | `rabiesVaccinatedOn === null` | 去打狂犬疫苗 |
-| `waiting_antibody` | 已接种，但距接种不足 `rabiesWaitDays` 天 | 等（显示还要等几天） |
-| `ready_to_test` | 已接种且已满 `rabiesWaitDays` 天，`antibodyTestedOn === null` | 去采血做抗体检测 |
-| `waiting_cert` | 已有抗体检测记录，但没有检疫证明 | 准备申报（提前 `quarantineLeadDays` 天） |
-| `certified` | `quarantineCertNo` 非空 且 `quarantineCertValidUntil` ≥ 今天 | 可以出售 |
-| `cert_expired` | 有证明编号但有效期已过 | **必须重新申报**，不能靠旧证出售 |
+**判定次序本身是业务规则，不是实现细节**（2026-10-03 裁定后修订；下表按实际判定次序排列，第一个命中的即为结果）：
+
+| 序 | 阶段 | 判定 | 下一步该做什么 |
+|---|---|---|---|
+| 1 | `cert_expired` | `quarantineCertNo` 非空 **且** `quarantineCertValidUntil < 今天` | **必须重新申报**，不能靠旧证出售 |
+| 2 | `certified` | `quarantineCertNo` 非空 **且** `quarantineCertValidUntil` ≥ 今天 | 可以出售 |
+| 3 | `unvaccinated` | `rabiesVaccinatedOn === null` | 去打狂犬疫苗 |
+| 4 | `waiting_cert` | 已有抗体检测记录，但没有检疫证明 | 准备申报（提前 `quarantineLeadDays` 天） |
+| 5 | `ready_to_test` | 已接种且已满 `rabiesWaitDays` 天，`antibodyTestedOn === null` | 去采血做抗体检测 |
+| 6 | `waiting_antibody` | 已接种，但距接种不足 `rabiesWaitDays` 天 | 等（显示还要等几天） |
+
+**为什么「有证明」要排在「没接种」前面**（这是被明确裁定过的，不是随手排的）：
+
+1. **检疫证明本身就是出售的法定许可**。《动物防疫法》第二十九条禁止的是「未附有检疫证明」而出售；《犬产地检疫规程》5.1 是**逐只出具**动物检疫证明，而拿到这份证明的前提，规程 3.3 已经写明是「按规定进行狂犬病免疫，并在有效保护期内，且狂犬病免疫抗体检测合格」。也就是说**证明是免疫与抗体检测都已满足的下游产物——它存在就蕴含上游满足**。台账里 `rabiesVaccinatedOn` 那一格是给自己看的便利记录，**不是出售的前置条件**。
+2. **反过来排会给出与事实相反的行动指令**。从繁育基地接手一只「证随狗走、接种日期不详」的狗是真实场景，软件却说「先带去接种狂犬疫苗」并挡住出售——它会推着你为一只已经合法的狗白花钱打一针，同时让台账看起来是坏的。
+3. **反过来排还会丢信息**。「证明已过期、但接种日期没填」的狗会被判成 `unvaccinated`（= 从没打过疫苗），而不是 `cert_expired`（= 必须重新申报检疫）。后者才是你真正需要知道的下一步。
+
+**「有证明」两个条件必须都齐**：只有编号没有有效期、或只有有效期没编号，都当**没有证明**，继续往下判。`quarantineCertNo` 是这份证明的凭据，没有编号就无法把它与任何一份文件对上。
 
 **一条铁律**：`isSellable(dog, today)` 只有在 `certified` 阶段才返回 `true`。批次出栏前的检查清单（`preSaleChecklist(data, batchId, today)`）要能把"这批 8 只里有 3 只没有有效检疫证明"直接摆出来——**这是本工具唯一能防止 5 万级罚款的地方。**
 

@@ -3861,17 +3861,25 @@ export function quarantineSummary(data: AppData, batchId: string, today: string)
 **必须满足的行为:**
 
 1. **阶段判定严格按 §3.7 的表，且判定顺序就是下面这个顺序**（第一个匹配的即为结果）：
-   - `unvaccinated`：`dog.rabiesVaccinatedOn === null`
-   - `cert_expired`：`quarantineCertNo.trim() !== ''` 且 `quarantineCertValidUntil !== null` 且 `quarantineCertValidUntil < today` —— **必须先于 `certified` 判定**
+   - `cert_expired`：`quarantineCertNo.trim() !== ''` 且 `quarantineCertValidUntil !== null` 且 `quarantineCertValidUntil < today`
    - `certified`：`quarantineCertNo.trim() !== ''` 且 `quarantineCertValidUntil !== null` 且 `quarantineCertValidUntil >= today`
+   - `unvaccinated`：`dog.rabiesVaccinatedOn === null`
    - `waiting_cert`：`dog.antibodyTestedOn !== null`（且没有有效证明）
    - `ready_to_test`：`daysBetween(dog.rabiesVaccinatedOn, today) >= settings.rabiesWaitDays`
    - `waiting_antibody`：以上都不满足（已接种，但还没等够）
+
+   > ⚠️ **次序已按 2026-10-03 的裁定修订：两个「有证明」分支必须排在 `unvaccinated` 之前。**
+   > 原任务书把 `unvaccinated` 排在第一位，实施者按原样实现并把这个口径缝报了上来，裁定结果**反过来**。
+   > 理由：①《动物防疫法》第二十九条禁止的是「未附有检疫证明」而出售，而《犬产地检疫规程》3.3 规定**拿到证明的前提就是免疫在有效保护期内 + 抗体检测合格**——证明是下游产物，它存在就蕴含上游满足，`rabiesVaccinatedOn` 只是给自己看的便利记录，**不是出售的前置条件**；②反过来排会对「证随狗走、接种日期不详」的狗说「先带去接种狂犬疫苗」并挡住出售，**给出与事实相反的行动指令**；③反过来排会把「证明已过期但接种日期没填」的狗误判成 `unvaccinated`（从没打过疫苗）而不是 `cert_expired`（必须重新申报），丢掉真正有用的下一步。
+   > **「先判过期再判有效」仍然必须保持**——写反了过期证会被当成有效证。这一条与本次改动无关，别一起改掉。
 2. **边界（必须有测试）**：
    - `daysBetween(rabiesVaccinatedOn, today) === settings.rabiesWaitDays` → `ready_to_test`（满当天即可送检）
    - `quarantineCertValidUntil === today` → `certified`（有效期末尾那天仍可售）
    - `quarantineCertValidUntil < today` → `cert_expired`，且 `isSellable === false`
    - `quarantineCertNo === '   '`（全空格）→ 视为无证明
+   - **`rabiesVaccinatedOn === null` 但 `quarantineCertNo` 与 `quarantineCertValidUntil` 都齐且未过期 → `certified` + `isSellable === true`**（本次裁定的核心用例）
+   - **同上但 `quarantineCertValidUntil < today` → `cert_expired` + `isSellable === false`**（不得掉进 `unvaccinated`）
+   - `quarantineCertNo !== ''` 但 `quarantineCertValidUntil === null` → **不算有证明**，继续往下判
 3. `isSellable(dog, settings, today)` **只有** `stage === 'certified'` 时为 `true`，实现上直接返回 `quarantineStatus(...).isSellable`——**不得另写一套判定**。
 4. `daysUntilTestable`：仅在 `waiting_antibody` 时 = `settings.rabiesWaitDays - daysBetween(dog.rabiesVaccinatedOn, today)`（正数）；其余阶段为 `null`。
 5. `certExpiresIn(dog, today)`：`quarantineCertValidUntil` 非 `null` 时返回 `daysBetween(today, quarantineCertValidUntil)`（可能为负，表示已过期），否则 `null`。
