@@ -5,6 +5,7 @@ import { batchSummary } from '../../domain/costing'
 import { formatMoney } from '../../domain/money'
 import { buildReceiptRows, receiptToBlob } from '../receipt'
 import { todayLocalIso } from '../planForm'
+import { SettingsPanel } from './SettingsPanel'
 
 /**
  * 「报」页面 —— 分账与一键对账单图片。
@@ -176,6 +177,8 @@ export function ReportPage() {
           </ul>
         </>
       )}
+
+      <SettingsPanel />
     </div>
   )
 }

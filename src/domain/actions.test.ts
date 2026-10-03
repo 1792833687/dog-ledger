@@ -1,12 +1,14 @@
 import { describe, it, expect } from 'vitest'
-import { DEFAULT_DATA } from './types'
+import { DEFAULT_DATA, BUILTIN_COST_ITEMS } from './types'
 import {
   setDogStatus, sellDog, markDogDead, addExpense, createBatch,
   addInjection, addIncome, addReimbursement, addDistribution, setDogQuarantine,
+  updateSettings, renamePartner, setPartnerRatio, addCostItem,
 } from './actions'
 import { batchSummary, dogIncome, dogOwnCost, batchTotalCost, dogProfitFen } from './costing'
 import { poolBalance, advanceBalance, contributedCapital, distributedTo } from './ledger'
 import { quarantineStatus } from './quarantine'
+import { validateSettings } from './settlement'
 
 /** 建一个批次，并记一笔运输费 */
 function seed() {
@@ -707,5 +709,130 @@ describe('setDogQuarantine', () => {
     expect(quarantineStatus(next.dogs[0], next.settings, '2026-10-02').stage).toBe('certified')
     const dropped = setDogQuarantine(next, 'd1', { rabiesVaccinatedOn: null })
     expect(quarantineStatus(dropped.dogs[0], dropped.settings, '2026-10-02').isSellable).toBe(true)
+  })
+})
+
+describe('设置类动作', () => {
+  it('updateSettings 只动 settings，不动流水', () => {
+    const next = updateSettings(DEFAULT_DATA, { targetMarginRate: 0.5 })
+    expect(next.settings.targetMarginRate).toBe(0.5)
+    expect(next.entries).toEqual(DEFAULT_DATA.entries)
+    expect(next.dogs).toEqual(DEFAULT_DATA.dogs)
+  })
+
+  it('不修改原数据', () => {
+    updateSettings(DEFAULT_DATA, { targetMarginRate: 0.9 })
+    expect(DEFAULT_DATA.settings.targetMarginRate).toBe(0.3)
+  })
+
+  it('renamePartner 只改名字', () => {
+    const next = renamePartner(DEFAULT_DATA, 'p1', '阿强')
+    expect(next.settings.partners.find(p => p.id === 'p1')?.name).toBe('阿强')
+    expect(next.settings.partners.find(p => p.id === 'p2')?.name).toBe('伙伴')
+  })
+
+  it('setPartnerRatio 改比例后，校验能挡住不是 100% 的组合', () => {
+    const next = setPartnerRatio(DEFAULT_DATA, 'p1', 0.6)
+    expect(validateSettings(next.settings)).toBe('分成比例之和必须等于 100%')
+    const fixed = setPartnerRatio(next, 'p2', 0.4)
+    expect(validateSettings(fixed.settings)).toBeNull()
+  })
+
+  it('addCostItem 追加一个自定义成本项，且不是内置项', () => {
+    const next = addCostItem(DEFAULT_DATA, '狗粮', 'batch')
+    const item = next.settings.costItems.find(c => c.name === '狗粮')
+    expect(item?.scope).toBe('batch')
+    expect(item?.isBuiltin).toBe(false)
+    expect(next.settings.costItems).toHaveLength(DEFAULT_DATA.settings.costItems.length + 1)
+  })
+
+  it('updateSettings 一次改多个键，没传的键保持原值', () => {
+    const next = updateSettings(DEFAULT_DATA, {
+      targetMarginRate: 0.5, expectedMortalityRate: 0.2, quarantinePerDog: 5000,
+    })
+    expect(next.settings.targetMarginRate).toBe(0.5)
+    expect(next.settings.expectedMortalityRate).toBe(0.2)
+    expect(next.settings.quarantinePerDog).toBe(5000)
+    expect(next.settings.disposalPerDog).toBe(DEFAULT_DATA.settings.disposalPerDog)
+    expect(next.settings.rabiesWaitDays).toBe(21)
+  })
+
+  it('★ updateSettings 不重建 partners / entries / dogs / batches', () => {
+    const next = updateSettings(DEFAULT_DATA, { targetMarginRate: 0.5 })
+    expect(next.settings).not.toBe(DEFAULT_DATA.settings)
+    expect(next.settings.partners).toBe(DEFAULT_DATA.settings.partners)
+    expect(next.entries).toBe(DEFAULT_DATA.entries)
+    expect(next.dogs).toBe(DEFAULT_DATA.dogs)
+    expect(next.batches).toBe(DEFAULT_DATA.batches)
+  })
+
+  it('★ renamePartner 找不到这个合伙人时原样返回同一引用', () => {
+    expect(renamePartner(DEFAULT_DATA, 'ghost', '幽灵')).toBe(DEFAULT_DATA)
+  })
+
+  it('★ renamePartner 不换比例，也不换别人的对象引用', () => {
+    const next = renamePartner(DEFAULT_DATA, 'p1', '阿强')
+    expect(next.settings.partners[1]).toBe(DEFAULT_DATA.settings.partners[1])
+    expect(next.settings.partners[0]).not.toBe(DEFAULT_DATA.settings.partners[0])
+    expect(next.settings.partners[0].shareRatio).toBe(0.5)
+    expect(next.batches).toBe(DEFAULT_DATA.batches)
+  })
+
+  it('★ setPartnerRatio 找不到这个人时原样返回同一引用', () => {
+    expect(setPartnerRatio(DEFAULT_DATA, 'ghost', 0.5)).toBe(DEFAULT_DATA)
+  })
+
+  it('★ setPartnerRatio 只换那一个人的对象', () => {
+    const next = setPartnerRatio(DEFAULT_DATA, 'p1', 0.6)
+    expect(next.settings.partners[0].shareRatio).toBe(0.6)
+    expect(next.settings.partners[1]).toBe(DEFAULT_DATA.settings.partners[1])
+    expect(next.entries).toBe(DEFAULT_DATA.entries)
+  })
+
+  it('★ 比例被写成 0 会被校验挡住 —— 所以界面必须在空输入时就不写', () => {
+    const next = setPartnerRatio(DEFAULT_DATA, 'p1', 0)
+    expect(next.settings.partners[0].shareRatio).toBe(0)
+    expect(validateSettings(next.settings)).toBe('分成比例之和必须等于 100%')
+  })
+
+  it('★ addCostItem 生成的 id 不与内置项、也不与已有成本项相撞', () => {
+    const builtinIds = new Set(BUILTIN_COST_ITEMS.map(c => c.id))
+    let data = DEFAULT_DATA
+    for (let i = 0; i < 20; i++) data = addCostItem(data, `自定义${i}`, 'dog')
+    const custom = data.settings.costItems.filter(c => !builtinIds.has(c.id))
+    expect(custom).toHaveLength(20)
+    expect(new Set(custom.map(c => c.id)).size).toBe(20)
+    for (const c of custom) expect(c.id.length).toBeGreaterThan(0)
+  })
+
+  it('addCostItem 追加在末尾，已有的成本项连对象引用都没换', () => {
+    const next = addCostItem(DEFAULT_DATA, '狗粮', 'batch')
+    const before = DEFAULT_DATA.settings.costItems
+    expect(next.settings.costItems).toHaveLength(before.length + 1)
+    for (let i = 0; i < before.length; i++) expect(next.settings.costItems[i]).toBe(before[i])
+    expect(next.settings.costItems[next.settings.costItems.length - 1].name).toBe('狗粮')
+  })
+
+  it('addCostItem 不动流水/狗/批次，名字原样保存（trim 是界面的事）', () => {
+    const next = addCostItem(DEFAULT_DATA, '狗粮 ', 'dog')
+    expect(next.entries).toBe(DEFAULT_DATA.entries)
+    expect(next.dogs).toBe(DEFAULT_DATA.dogs)
+    expect(next.batches).toBe(DEFAULT_DATA.batches)
+    const item = next.settings.costItems[next.settings.costItems.length - 1]
+    expect(item.name).toBe('狗粮 ')
+    expect(item.scope).toBe('dog')
+    expect(item.isBuiltin).toBe(false)
+  })
+
+  it('★ setPartnerRatio 与 addCostItem 不修改传入的 data', () => {
+    const data = DEFAULT_DATA
+    const ratioBefore = data.settings.partners[0].shareRatio
+    const itemsBefore = data.settings.costItems.length
+    setPartnerRatio(data, 'p1', 0.9)
+    addCostItem(data, '狗粮', 'dog')
+    expect(ratioBefore).toBe(0.5)
+    expect(itemsBefore).toBe(BUILTIN_COST_ITEMS.length)
+    expect(data.settings.partners[0].shareRatio).toBe(0.5)
+    expect(data.settings.costItems).toHaveLength(itemsBefore)
   })
 })

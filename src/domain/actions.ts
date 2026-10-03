@@ -1,4 +1,4 @@
-import type { AppData, Batch, Dog, DogStatus, LedgerEntry, Money } from './types'
+import type { AppData, Batch, CostItemDef, Dog, DogStatus, LedgerEntry, Money, Settings } from './types'
 import { newId } from './types'
 
 /**
@@ -206,4 +206,58 @@ export function setDogQuarantine(data: AppData, dogId: string, patch: DogQuarant
     quarantineCertValidUntil: keepOrSet(patch.quarantineCertValidUntil, dog.quarantineCertValidUntil),
   }
   return { ...data, dogs: data.dogs.map(d => (d.id === dogId ? next : d)) }
+}
+
+/**
+ * 改设置里的若干项（目标毛利率、预估死亡率、默认检疫费…）。
+ *
+ * `patch` 里没提到的键保持原值。**不校验**：校验是 `validateSettings` 的事，界面负责把
+ * 错误提示出来。这里不做「非法就拒绝」，因为用户改「分成比例」时中间必然经过不合法的
+ * 状态（48%+52% → 先改成 60% 的那一刻总和是 112%），一拒绝就没法操作了。
+ */
+export function updateSettings(data: AppData, patch: Partial<Settings>): AppData {
+  return { ...data, settings: { ...data.settings, ...patch } }
+}
+
+/**
+ * 改某个合伙人的名字。找不到这个人时原样返回**同一个引用**（不凭空造人）。
+ */
+export function renamePartner(data: AppData, partnerId: string, name: string): AppData {
+  if (!data.settings.partners.some(p => p.id === partnerId)) return data
+  return {
+    ...data,
+    settings: {
+      ...data.settings,
+      partners: data.settings.partners.map(p => (p.id === partnerId ? { ...p, name } : p)),
+    },
+  }
+}
+
+/**
+ * 改某个合伙人的分成比例（0~1，所有人之和必须是 1，由 `validateSettings` 把关）。
+ * 同样：找不到人时原样返回同一引用。改比例**不会动已经发生过的账**——
+ * 每次分红都按当时的比例写进了流水，历史不会被追溯篡改。
+ */
+export function setPartnerRatio(data: AppData, partnerId: string, ratio: number): AppData {
+  if (!data.settings.partners.some(p => p.id === partnerId)) return data
+  return {
+    ...data,
+    settings: {
+      ...data.settings,
+      partners: data.settings.partners.map(p => (p.id === partnerId ? { ...p, shareRatio: ratio } : p)),
+    },
+  }
+}
+
+/**
+ * 加一个自定义成本项。`isBuiltin: false` —— 内置项来自 `BUILTIN_COST_ITEMS`，
+ * 用户自己加的不能冒充内置项（界面靠这个标记区分「能删」与「删了会让历史流水找不到名字」）。
+ * `name` 原样保存，`trim` 是界面的事（域层不替用户改他输入的字符串）。
+ */
+export function addCostItem(data: AppData, name: string, scope: CostItemDef['scope']): AppData {
+  const item: CostItemDef = { id: newId(), name, scope, isBuiltin: false }
+  return {
+    ...data,
+    settings: { ...data.settings, costItems: [...data.settings.costItems, item] },
+  }
 }
