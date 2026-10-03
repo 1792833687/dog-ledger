@@ -2799,6 +2799,28 @@ git commit -m "feat: 批次台账页面与领域动作"
 
 > **另外：本任务 Interfaces 的 `Consumes` 声明了 4 个 ledger 函数，而页面只 import 2 个——这不是缺陷**（测试文件确实用到全部 4 个）。不要为了「对齐」去改页面的 import。
 
+> **【实现后回填：实际落地与计划有 9 处偏离，全部经控制器接受（`8b52182`，浏览器验证 45/45 PASS）】**
+> 1. **多出 `src/ui/moneyBook.ts` + `moneyBook.test.ts`（纯函数，不 import React）。** 理由与 Task 10 的 `dogLedger.ts` 相同：`react/only-export-components` 是 warn 而本仓门禁是 0 warning，组件文件只该导出组件；而且分类中文名与按钮可用性**判错就直接记错账**，必须能单测。**改动 `MoneyPage.tsx` 的判定时，先改 `moneyBook.ts` 并补它的测试。**
+> 2. **`canSubmit(dialog, amount, partnerId)` 同时驱动 `disabled` 与 `submit()` 守卫**（计划是 `disabled={parseMoney(amount) === null}` 一个条件、守卫在 `submit()` 里另写两条 `if`）。两边各写一遍迟早出现「按钮亮着但点了没反应」。
+> 3. **流水行标题 `entryLabel` 会去重**：分类名与类型名相同就只显示一个（否则卖狗收入显示成「收入 · 收入」），`category === 'transfer'` 时只显示类型名（注资/报销/分红，不显示「· 转账」）。
+> 4. **两处计划没有的空状态提示**：`partners` 为空时不显示垫付卡片、改成琥珀色「还没有合伙人。注资、报销、分红都要指明是谁的钱，先去「设置」页把人加上。」；Modal 内「需要归属人但没人可选」时提示「这笔钱要记在某个合伙人名下，先去「设置」页添加合伙人。」。计划只加了 `submit()` 的静默 return，而静默 return 在界面上表现为「按钮灰着、没解释」。
+> 5. 非法金额的红字提示改成与 `canSubmit` **共用同一份判定**，并加了一致性测试「`amountInvalid` 与 `canSubmit` 不会同时为真」。
+> 6. 去掉 Modal 标题的恒等三元 `TYPE_LABEL[dialog === 'expense' ? 'expense' : dialog]` → `dialog === null ? '' : TYPE_LABEL[dialog]`。
+> 7. **`submit()` 的 `switch (type)` 没有 `default`**，靠 `BookDialog` 联合类型的穷尽性——将来多一种弹窗，`tsc -b` 会报「函数可能不返回 `AppData`」而不是静默少记一笔账。
+> 8. 最近流水的第二行**加了注资人**（`e.type === 'injection'` 时补 `· <合伙人名> 注入`）。注资的 `paidBy` 就是注入人，不显示出来，这一页就答不了它自己要答的问题（「这些钱是谁的」）。
+> 9. `NON_COST_CATEGORY` 的值类型写成 **`Record<string, string | undefined>`** 而不是 `Record<string, string>`。`tsconfig.app.json` 没开 `noUncheckedIndexedAccess`，写成 `string` 会让 `?? '其他'` 在类型上成为死代码。
+>
+> **`LedgerEntry` 的字段语义（写代码和写测试时都容易搞错，控制器自己就踩了）**：`paidBy: 'pool' | string` **只对 `expense` 有意义**（'pool' = 池子直付，否则是垫付的合伙人 id）。**`reimbursement` / `distribution` 用 `payee: string | null` 表示收款的合伙人 id，同时 `paidBy` 保持 `'pool'`**（`src/domain/types.ts:133-136`）。对报销/分红断言 `paidBy` 等于某个合伙人是错的。
+
+> **【Task 11b — 报销额不得超过垫付额（控制器裁定：在 UI 层拦，域层保持宽松）】**
+> `addReimbursement` 不设上限，超报会把 `advanceBalance`（`src/domain/ledger.ts:32` 是纯减法）压成负数，同时池子被多扣一笔。计划 Step 6 的走查只覆盖了「恰好报完」这一种情况。
+> - **域层不加会拒绝历史/导入数据的硬校验**（已存在的 entries 里本来就可能超报，加载时必须还能正确算账）。
+> - **UI 层**：报销弹窗算出该合伙人**当前**的垫付余额，金额超过它时给出中文红字提示（必须把那个数说出来）、「记下」`disabled`、点下去不产生任何流水。
+> - **边界**：`amount === advanceBalance` **必须放行**（报完归零是正常操作）；多 1 分就要拦。
+> - `disabled` 与 `submit()` 守卫必须由**同一个谓词**决定；判定写进 `src/ui/moneyBook.ts` 并配单测。
+> - `parseMoney` 返回 `null` 时不得先变成 `0` 再参与「0 > 余额」的比较——那种情况由既有的「金额只能填数字」提示负责，两条提示不许同时出现。
+> - 其它四种弹窗（支出/收入/注资/分红）行为不变。
+
 **Files:**
 - Modify: `src/ui/pages/MoneyPage.tsx`（整体替换）
 - Modify: `src/domain/actions.ts`（新增 `addInjection`、`addIncome`、`addReimbursement`、`addDistribution`）
