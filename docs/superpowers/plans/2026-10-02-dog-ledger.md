@@ -3495,9 +3495,11 @@ Run: `npm run dev` → 点「生成对账单图片」，确认能下载到一张
 - [ ] **Step 7: 提交**
 
 ```bash
-git add src
+git add src/ui/pages/ReportPage.tsx src/ui/receipt.ts src/ui/receipt.test.ts
 git commit -m "feat(ui): 对账页面与一键对账单图片"
 ```
+
+> **`git add` 的路径必须逐字列出。** 这个仓库里同时可能有人在改别的文件，`git add src` 会把别人写了一半的工作扫进你的提交（已经发生过一次，见本计划的 controller incident 记录）。
 
 ---
 
