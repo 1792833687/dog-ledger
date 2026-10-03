@@ -1412,10 +1412,12 @@ export function createBatchFromPlan(
   input: PlanInput,
   batchName: string,
   date: string,
+  plannedChannel: ChannelId = 'undecided',
 ): AppData {
   const batchId = newId()
   const batch: Batch = {
     id: batchId, name: batchName, date, source: '', note: '', status: 'active',
+    plannedChannel,
   }
 
   const n = Math.max(0, Math.floor(input.n))
@@ -1435,6 +1437,9 @@ export function createBatchFromPlan(
     dogs.push({
       id: dogId, batchId, code: `${batchName}-${i}`, breed: '',
       sex: 'unknown', ageMonths: null, status: 'in_stock', note: '',
+      rabiesVaccinatedOn: null, antibodyTestedOn: null,
+      antibodyReportNo: '', quarantineCertNo: '',
+      quarantineCertIssuedOn: null, quarantineCertValidUntil: null,
     })
     if (input.purchasePrice > 0) {
       entries.push({ id: newId(), type: 'expense', category: 'purchase', amount: input.purchasePrice, ...baseEntry, dogId })
@@ -2290,6 +2295,10 @@ function sellSeed() {
       dogs: [...data.dogs, {
         id: dogId, batchId, code: `${i}`, breed: '', sex: 'unknown',
         ageMonths: null, status: 'in_stock', note: '',
+        // 刚买回来的狗：没接种、没检测、没证明（修订二新增的 6 个必填字段）
+        rabiesVaccinatedOn: null, antibodyTestedOn: null,
+        antibodyReportNo: '', quarantineCertNo: '',
+        quarantineCertIssuedOn: null, quarantineCertValidUntil: null,
       }],
     }
     data = addExpense(data, { batchId, dogId, category: 'purchase', amount: 60000, paidBy: 'pool', date: '2026-10-03', note: '' })
@@ -2605,6 +2614,10 @@ export function DogsPage() {
             dogs: [...d.dogs, {
               id: dogId, batchId: batch.id, code: `${batch.name}-补${dogs.length + 1}`,
               breed: '', sex: 'unknown', ageMonths: null, status: 'in_stock', note: '',
+              // 修订二新增的 6 个必填字段：补录的狗同样没接种、没检测、没证明
+              rabiesVaccinatedOn: null, antibodyTestedOn: null,
+              antibodyReportNo: '', quarantineCertNo: '',
+              quarantineCertIssuedOn: null, quarantineCertValidUntil: null,
             }],
           }))
         }}
