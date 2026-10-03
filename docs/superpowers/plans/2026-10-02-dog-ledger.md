@@ -1500,7 +1500,7 @@ git commit -m "feat(domain): 决策台模拟与一键建批次"
 ```ts
 import { describe, it, expect } from 'vitest'
 import { createMemoryStorage } from './memory'
-import { DEFAULT_DATA } from '../domain/types'
+import { DEFAULT_DATA, type AppData } from '../domain/types'
 
 describe('createMemoryStorage', () => {
   it('没有数据时 load 返回 null', async () => {
@@ -1523,7 +1523,9 @@ describe('createMemoryStorage', () => {
 
   it('存进来的对象是快照，之后修改原对象不影响已存数据', async () => {
     const s = createMemoryStorage()
-    const data = { ...DEFAULT_DATA, batches: [] }
+    // 必须显式标注 AppData。`{ ...DEFAULT_DATA, batches: [] }` 会被推断成 `batches: never[]`，
+    // 下一行 push 就报 TS2345 —— vitest 绿、`tsc -b` 红，正是本仓最容易踩的坑。
+    const data: AppData = { ...DEFAULT_DATA, batches: [] }
     await s.save(data)
     data.batches.push({ id: 'b9', name: 'late', date: '2026-10-04', source: '', note: '', status: 'active', plannedChannel: 'undecided' })
     expect((await s.load())!.batches).toHaveLength(0)
