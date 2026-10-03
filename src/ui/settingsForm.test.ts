@@ -2,6 +2,8 @@ import { describe, it, expect } from 'vitest'
 import {
   formatPercent, applyPercentInput, applyMortalityInput, applyMoneyInput, inputError,
 } from './settingsForm'
+// 只读的参考实现：「算」页的死亡率解析规则。用来钉「两个页面同一个输入同一个结论」。
+import { parseMortalityPercent } from './planForm'
 
 describe('formatPercent：比例 -> 输入框里显示什么', () => {
   it('整数百分比不拖小数点', () => {
@@ -50,23 +52,30 @@ describe('applyPercentInput：比例输入框', () => {
   })
 })
 
-describe('applyMortalityInput：死亡率有上下限（0~99%）', () => {
+describe('applyMortalityInput：死亡率越界拒绝，不夹取（0~99%）', () => {
   it('范围内的值原样保留草稿', () => {
     expect(applyMortalityInput('15')).toEqual({ draft: '15', ratio: 0.15 })
     expect(applyMortalityInput('12.5')).toEqual({ draft: '12.5', ratio: 0.125 })
     expect(applyMortalityInput('0')).toEqual({ draft: '0', ratio: 0 })
   })
 
-  it('★ 只有真的夹了才改写草稿（否则打「12.」时小数点会被吃掉）', () => {
-    expect(applyMortalityInput('12.')).toEqual({ draft: '12.', ratio: 0.12 })
-    expect(applyMortalityInput('125')).toEqual({ draft: '99', ratio: 0.99 })
-    expect(applyMortalityInput('-3')).toEqual({ draft: '0', ratio: 0 })
+  it('★ 草稿永远原样保留（打到一半的「12.」不能被改写，否则小数点会被吃掉）', () => {
+    expect(applyMortalityInput('12.')).toEqual({ draft: '12.', ratio: null })
+    expect(applyMortalityInput('125')).toEqual({ draft: '125', ratio: null })
+    expect(applyMortalityInput('-3')).toEqual({ draft: '-3', ratio: null })
   })
 
-  it('★ 夹完不能等于 100%（validateSettings 要求 < 100%）', () => {
-    const r = applyMortalityInput('100')
-    expect(r.ratio).toBe(0.99)
-    expect(r.draft).toBe('99')
+  it('★ 越界不再夹成 99：账里一个字都不写（错的数字比没有数字危险）', () => {
+    // 夹取会把「我打错了」这个信息抹掉：夹完框里是 99，用户没有任何线索知道自己打的是 125。
+    expect(applyMortalityInput('125').ratio).toBeNull()
+    expect(applyMortalityInput('100').ratio).toBeNull()
+    expect(applyMortalityInput('100').draft).toBe('100')
+  })
+
+  it('★ 上界是 99：99 合法（0.99），99.5 不合法', () => {
+    expect(applyMortalityInput('99')).toEqual({ draft: '99', ratio: 0.99 })
+    expect(applyMortalityInput('99.5').ratio).toBeNull()
+    expect(applyMortalityInput('99.5').draft).toBe('99.5')
   })
 
   it('空串与不是数字的：ratio 是 null', () => {
@@ -121,9 +130,12 @@ describe('inputError：什么时候该在输入框下面显示红字', () => {
     expect(inputError('mortality', '6o')).toBeDefined()
   })
 
-  it('★ 数字但越界不算「输入错误」：死亡率的越界会被夹住，比例的越界由「和必须等于 100%」报', () => {
-    expect(inputError('mortality', '125')).toBeUndefined()
-    expect(inputError('mortality', '-3')).toBeUndefined()
+  it('★ 死亡率的越界现在算「输入错误」（报红字，不再夹住）；比例的越界仍由「和必须等于 100%」报', () => {
+    // 文案与 src/ui/planForm.ts:142 逐字相同 —— 全仓只有一条死亡率文案
+    expect(inputError('mortality', '125')).toBe('死亡率要填 0 到 99 之间的数字')
+    expect(inputError('mortality', '-3')).toBe('死亡率要填 0 到 99 之间的数字')
+    expect(inputError('mortality', '99.5')).toBe('死亡率要填 0 到 99 之间的数字')
+    expect(inputError('mortality', '99')).toBeUndefined()
     expect(inputError('ratio', '120')).toBeUndefined()
     expect(inputError('ratio', '-5')).toBeUndefined()
   })
@@ -153,5 +165,30 @@ describe('一致性：报了红字的输入绝不会被写进账', () => {
     expect(applyPercentInput('').ratio).toBeNull()
     expect(applyMortalityInput('').ratio).toBeNull()
     expect(applyMoneyInput('').fen).toBeNull()
+  })
+})
+
+describe('一致性：设置页与算页的死亡率是同一套口径（拒绝，不夹取）', () => {
+  it('★ 同一个输入，两边要么都收、要么都拒，且拒绝时必定有红字', () => {
+    const samples = ['', '  ', '0', '12.5', '99', '99.5', '100', '125', '-1', 'abc', '12.', '25%']
+    for (const raw of samples) {
+      const rate = parseMortalityPercent(raw) // 「算」页（src/ui/planForm.ts:100-110）
+      const { ratio } = applyMortalityInput(raw) // 「设置」页
+      expect(ratio === null).toBe(rate === null)
+      if (rate !== null) expect(ratio).toBe(rate)
+      // 被拒的那一侧必须同时出红字，别让用户对着 125 看不到任何线索
+      expect(inputError('mortality', raw) !== undefined).toBe(rate === null && raw.trim() !== '')
+    }
+  })
+
+  it('★ 125：算页拒绝 + 设置页拒绝，两边都不写账', () => {
+    expect(inputError('mortality', '125') !== undefined).toBe(true)
+    expect(parseMortalityPercent('125')).toBeNull()
+    expect(applyMortalityInput('125')).toEqual({ draft: '125', ratio: null })
+  })
+
+  it('★ 打到一半的「12.」不写账，接着填成「12.5」才写账 0.125', () => {
+    expect(applyMortalityInput('12.')).toEqual({ draft: '12.', ratio: null })
+    expect(applyMortalityInput('12.5')).toEqual({ draft: '12.5', ratio: 0.125 })
   })
 })

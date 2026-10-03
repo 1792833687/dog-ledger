@@ -111,8 +111,8 @@ export function SettingsPanel() {
           error={mortalityDraft === null ? undefined : inputError('mortality', mortalityDraft)}
           onChange={v => {
             const { draft, ratio } = applyMortalityInput(v)
-            // 夹住的时候（例如填 125）`draft` 是 '99'，把夹完的值写回框里，
-            // 让「框里显示的」就是「存下的」，不让人以为存的是 125%。
+            // 草稿原样写回框里（打「12.」时小数点不会被吃掉）。
+            // 越界（例如填 125）`ratio` 是 null：**不写账、只出红字**，让人看见自己填错了。
             setMortalityDraft(draft)
             if (ratio === null) return
             void update(d => updateSettings(d, { expectedMortalityRate: ratio }))

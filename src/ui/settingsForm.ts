@@ -1,5 +1,8 @@
 import type { Money } from '../domain/types'
 import { parseMoney } from '../domain/money'
+// 死亡率的解析规则**只有这一处**（`src/ui/planForm.ts`）。「算」页与「设置」页必须给同一个
+// 输入同一个结论，所以这里复用而不是重写一遍。
+import { parseMortalityPercent } from './planForm'
 
 /**
  * 「设置」面板里那几个数字输入框的纯逻辑。
@@ -40,16 +43,20 @@ export function applyPercentInput(raw: string): { draft: string; ratio: number |
 }
 
 /**
- * 默认预估死亡率：夹到 0~99%（`validateSettings` 要求 `>= 0 && < 1`）。
+ * 默认预估死亡率：越界**拒绝**，不夹取（`parseMortalityPercent` 要求 0~99%）。
  *
- * **只有真的夹了才改写草稿** —— 否则打 `12.` 的那一下会被改写成 `12`，小数点又没了，
- * 想填 12.5 的人永远填不进去。夹住的时候改写草稿是故意的：让「框里显示的」就是「存下的」。
+ * 早先这里是把输入夹到 0~99 再写账的，坏处是静默：填 125 的人框里看到 99、没有红字，
+ * 以为设在 125%，账里却是 99% —— 这个数直接决定决策台预估死几只、进而决定保本价。
+ * 而且「算」页对同一个 125 是报红字的，同一件事两个页面两种结果没人能建立预期。
+ * 现在两边都跟着 `src/ui/planForm.ts:100-110` 走：拒绝 + 红字，绝不写账。
+ *
+ * **草稿永远原样保留**（`draft: raw`）—— 打 `12.` 的那一下不能被改写成 `12`，否则小数点
+ * 又没了，想填 12.5 的人永远填不进去。
  */
 export function applyMortalityInput(raw: string): { draft: string; ratio: number | null } {
-  const percent = parseNumber(raw)
-  if (percent === null) return { draft: raw, ratio: null }
-  const clamped = Math.min(99, Math.max(0, percent))
-  return { draft: clamped === percent ? raw : String(clamped), ratio: clamped / 100 }
+  const rate = parseMortalityPercent(raw)
+  if (rate === null) return { draft: raw, ratio: null }
+  return { draft: raw, ratio: rate }
 }
 
 /**
@@ -67,8 +74,9 @@ export function applyMoneyInput(raw: string): { draft: string; fen: Money | null
 /**
  * 这个框下面要不要显示红字。返回 `undefined` 表示合法（`Field` 的 `error` prop 就是不传）。
  *
- * 只有「填了但不是数字」（以及钱填成负数）才算输入错误：**数字但越界不算** ——
- * 死亡率越界会被夹住，比例越界由页面底部那句 `validateSettings` 的红字去说
+ * 死亡率越界（`125` / `99.5` / `-1`）**算**输入错误：它会被拒绝、不写账，所以必须让用户看见
+ * 自己填错了 —— 错的数字比没有数字危险得多。文案与 `src/ui/planForm.ts:142` 逐字相同。
+ * 比例越界不算输入错误，由页面底部那句 `validateSettings` 的红字去说
  * （分成比例之和必须等于 100%），一个框一条红字比两处报同一件事清楚。
  */
 export function inputError(kind: InputKind, raw: string): string | undefined {
@@ -82,7 +90,7 @@ export function inputError(kind: InputKind, raw: string): string | undefined {
       return undefined
     }
     case 'mortality':
-      return parseNumber(text) === null ? '填一个 0~99 之间的数字，例如 15 或 12.5' : undefined
+      return parseMortalityPercent(text) === null ? '死亡率要填 0 到 99 之间的数字' : undefined
     case 'ratio':
     case 'margin':
       return parseNumber(text) === null ? '填一个数字，例如 30 或 30.5' : undefined
