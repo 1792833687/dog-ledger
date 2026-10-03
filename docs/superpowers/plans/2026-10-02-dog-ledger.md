@@ -16,6 +16,7 @@
 - 不得引入后端、账号系统、网络请求、第三方 UI 组件库。
 - 第一版**不存照片**（设计文档里的 `Dog.photoRef` 已移除，理由：备份体积与 YAGNI）。
 - 界面文案用中文。
+- **合规成本必须进成本模型**：`BUILTIN_COST_ITEMS` 含 `quarantine`（检疫）与 `disposal`（病死犬无害化处理）两项；`PlanInput` 含 `quarantinePerDog` 与 `disposalPerDog`。依据见 `docs/compliance/2026-10-02-犬只交易合规要点-法规篇.md`——检疫是出售的法定前置，没有检疫证明就是《动物防疫法》第二十九条的违法行为。任何把这笔钱排除在外的「保本价」都是错的。
 - 数据模型以 `docs/superpowers/specs/2026-10-02-dog-trading-ledger-design.md` 为准。
 - 单测命令：`npx vitest run`；单文件：`npx vitest run <文件路径>`。
 - 测试环境为 `node`（领域层是纯函数，不需要 jsdom）。
@@ -114,6 +115,10 @@ export interface Settings {
   targetMarginRate: number
   /** 预估死亡率默认值，用于决策台 */
   expectedMortalityRate: number
+  /** 每只狗的检疫费默认值（狂犬病免疫抗体检测 + 检疫申报跑腿），用于决策台预填 */
+  quarantinePerDog: Money
+  /** 每只病死犬的无害化处理费默认值，用于决策台预填 */
+  disposalPerDog: Money
   /** 上次备份时间，ISO datetime；从未备份为 null */
   lastBackupAt: string | null
 }
@@ -167,6 +172,13 @@ export const BUILTIN_COST_ITEMS: CostItemDef[] = [
   { id: 'purchase', name: '收购价', scope: 'dog', isBuiltin: true },
   { id: 'transport', name: '运输+笼具', scope: 'batch', isBuiltin: true },
   { id: 'medical', name: '疫苗驱虫医疗', scope: 'dog', isBuiltin: true },
+  // 检疫是法定前置：没有《动物检疫合格证明》就出售，按《动物防疫法》第二十九条、
+  // 第九十七条处罚（没收 + 货值 15~30 倍罚款，货值不足一万的处 5 万~15 万，负责人 5 年禁业）。
+  // 这不是「可选的合规开销」，是算保本价时必须计入的现金流出。
+  { id: 'quarantine', name: '检疫（抗体检测+申报）', scope: 'dog', isBuiltin: true },
+  // 病死犬必须无害化处理，不得买卖、加工、随意弃置（《动物防疫法》第五十七条第三款）。
+  // 这是真金白银的额外支出，与「损耗摊薄」那种账面重分配性质不同。
+  { id: 'disposal', name: '病死犬无害化处理', scope: 'batch', isBuiltin: true },
   { id: 'aftercare_refund', name: '售后退款', scope: 'dog', isBuiltin: true },
 ]
 
@@ -178,6 +190,10 @@ export const DEFAULT_SETTINGS: Settings = {
   costItems: BUILTIN_COST_ITEMS,
   targetMarginRate: 0.3,
   expectedMortalityRate: 0.15,
+  // 默认 0 = 「还不知道」。绝不许编一个看起来合理的数字：
+  // 检疫费各地不同、抗体检测价格未知，填 0 至少是诚实的，编 50 元会让人以为算过了。
+  quarantinePerDog: 0,
+  disposalPerDog: 0,
   lastBackupAt: null,
 }
 
@@ -216,6 +232,22 @@ describe('默认设置', () => {
     expect(transport.scope).toBe('batch')
   })
 
+  // 合规调研（docs/compliance/）查明：检疫是出售的法定前置，无害化处理是病死的强制支出。
+  // 这两项必须在成本项里，否则「保本价」会把两块真金白银的支漏掉。
+  it('内置成本项包含检疫与病死犬无害化处理', () => {
+    const quarantine = BUILTIN_COST_ITEMS.find(c => c.id === 'quarantine')!
+    const disposal = BUILTIN_COST_ITEMS.find(c => c.id === 'disposal')!
+    expect(quarantine).toBeDefined()
+    expect(quarantine.scope).toBe('dog')
+    expect(disposal).toBeDefined()
+    expect(disposal.scope).toBe('batch')
+  })
+
+  it('检疫与无害化处理的默认值都是 0，不许编造价格', () => {
+    expect(DEFAULT_SETTINGS.quarantinePerDog).toBe(0)
+    expect(DEFAULT_SETTINGS.disposalPerDog).toBe(0)
+  })
+
   it('默认数据的三个集合都是空数组', () => {
     expect(DEFAULT_DATA.batches).toEqual([])
     expect(DEFAULT_DATA.dogs).toEqual([])
@@ -231,7 +263,7 @@ describe('默认设置', () => {
 - [ ] **Step 5: 跑测试**
 
 Run: `npx vitest run src/domain/types.test.ts`
-Expected: 4 passed
+Expected: 6 passed
 
 - [ ] **Step 6: 让 App 能跑起来**
 
@@ -1073,6 +1105,8 @@ export function validateSettings(settings: Settings): string | null {
   if (!(settings.expectedMortalityRate >= 0 && settings.expectedMortalityRate < 1)) {
     return '预估死亡率必须在 0% 到 100% 之间'
   }
+  if (!(settings.quarantinePerDog >= 0)) return '检疫费不能为负'
+  if (!(settings.disposalPerDog >= 0)) return '病死犬处理费不能为负'
   return null
 }
 ```
@@ -1117,12 +1151,18 @@ import { plan, createBatchFromPlan, type PlanInput } from './planning'
 import { formatMoney } from './money'
 import { batchTotalCost, batchSummary } from './costing'
 
-/** 设计文档 3.6 案例：8 只 × 600 + 油费 400 + 每只疫苗 80，预估死亡率 25% */
+/**
+ * 设计文档 3.6 案例：8 只 × 600 + 油费 400 + 每只疫苗 80，预估死亡率 25%。
+ * 这里刻意把检疫费与无害化处理费设为 0，好让「损耗摊薄」这个教学案例的数字
+ * 与设计文档 3.6 节严格对得上。这两项由下面单独一组测试覆盖。
+ */
 const input: PlanInput = {
   n: 8,
   purchasePrice: 60000,
   freight: 40000,
   medicalPerDog: 8000,
+  quarantinePerDog: 0,
+  disposalPerDog: 0,
   mortalityRate: 0.25,
   targetPrice: 120000,
 }
@@ -1190,6 +1230,35 @@ describe('plan', () => {
   })
 })
 
+describe('plan 计入合规成本（检疫与无害化处理）', () => {
+  // docs/compliance/ 查明的两项法定支出：检疫是出售的前置条件，
+  // 病死犬无害化处理是强制支出。它们之前完全不在成本模型里，
+  // 结果就是这个软件最值钱的那个数字——保本价——是偏低的。
+  const compliance: PlanInput = {
+    ...input,
+    quarantinePerDog: 5000,   // 每只 ¥50
+    disposalPerDog: 20000,    // 每只病死犬 ¥200
+  }
+
+  it('检疫费按买回来的全部只数计，包括后来会死掉的那两只', () => {
+    const r = plan(DEFAULT_SETTINGS, { ...compliance, mortalityRate: 0, disposalPerDog: 0 })
+    expect(r.totalCost).toBe(584000 + 8 * 5000)   // 5840 元 + 400 元
+  })
+
+  it('无害化处理费按预估死亡只数计，不是按买回来的只数计', () => {
+    const r = plan(DEFAULT_SETTINGS, { ...compliance, quarantinePerDog: 0 })
+    expect(r.totalCost).toBe(584000 + 2 * 20000)  // 8 × 25% = 2 只 × 200 元
+  })
+
+  it('★ 两项都算进去后，保本价从 ¥973 抬到 ¥1,106', () => {
+    const r = plan(DEFAULT_SETTINGS, compliance)
+    expect(r.totalCost).toBe(664000)              // 5840 + 400 + 400 = 6640 元
+    expect(r.expectedAlive).toBeCloseTo(6, 10)
+    expect(r.breakEvenPriceFen).toBeCloseTo(664000 / 6, 6)
+    expect(formatMoney(r.breakEvenPriceFen)).toBe('¥1,106.67')
+  })
+})
+
 describe('createBatchFromPlan', () => {
   it('按计划创建批次、N 只狗、以及运输与每只狗的收购+疫苗支出', () => {
     const next = createBatchFromPlan(DEFAULT_DATA, input, '10月3日一批', '2026-10-03')
@@ -1199,6 +1268,18 @@ describe('createBatchFromPlan', () => {
     expect(batchTotalCost(next, batchId)).toBe(584000)
     // 1 笔运输 + 8 笔收购 + 8 笔疫苗
     expect(next.entries.filter(e => e.type === 'expense')).toHaveLength(17)
+  })
+
+  it('检疫费按每只狗记一笔支出，且在建批次时就记上', () => {
+    const next = createBatchFromPlan(
+      DEFAULT_DATA, { ...input, quarantinePerDog: 5000 }, '10月3日一批', '2026-10-03',
+    )
+    const batchId = next.batches[0].id
+    // 原来的 5840 元 + 8 只 × 50 元
+    expect(batchTotalCost(next, batchId)).toBe(584000 + 8 * 5000)
+    expect(next.entries.filter(e => e.type === 'expense' && e.category === 'quarantine')).toHaveLength(8)
+    // 无害化处理费是「预估会死几只」的假设，不是已发生的支出，所以建批次时一笔都不记
+    expect(next.entries.filter(e => e.type === 'expense' && e.category === 'disposal')).toHaveLength(0)
   })
 
   it('每只狗的编号形如 批次名-序号，且初始状态为在库', () => {
@@ -1244,6 +1325,10 @@ export interface PlanInput {
   freight: Money
   /** 每只疫苗医疗（分） */
   medicalPerDog: Money
+  /** 每只狗的检疫费（分）：狂犬病免疫抗体检测 + 检疫申报跑腿。法定前置，填 0 会低估保本价 */
+  quarantinePerDog: Money
+  /** 每只病死犬的无害化处理费（分）。只按预估死亡只数计入，不是按买回来的只数 */
+  disposalPerDog: Money
   /** 预估死亡率，0~1 */
   mortalityRate: number
   /** 打算卖多少钱一只（分） */
@@ -1268,7 +1353,15 @@ export interface PlanResult {
 
 export function plan(settings: Settings, input: PlanInput): PlanResult {
   const n = Math.max(0, Math.floor(input.n))
-  const totalCost = n * input.purchasePrice + input.freight + n * input.medicalPerDog
+  // 检疫费按买回来的【全部】只数交：狗死了检疫的钱也不会退。
+  // 无害化处理费只对【预估死亡】的那部分发生——所以两者算法不同，不能一起乘 n。
+  const expectedDead = n * input.mortalityRate
+  const totalCost =
+    n * input.purchasePrice +
+    input.freight +
+    n * input.medicalPerDog +
+    n * input.quarantinePerDog +
+    expectedDead * input.disposalPerDog
 
   // 预估存活数：至少为 1（全部死光时不能除零，保本价退化为总成本）
   const expectedAlive = Math.max(1, n * (1 - input.mortalityRate))
@@ -1329,6 +1422,11 @@ export function createBatchFromPlan(
     }
     if (input.medicalPerDog > 0) {
       entries.push({ id: newId(), type: 'expense', category: 'medical', amount: input.medicalPerDog, ...baseEntry, dogId })
+    }
+    // 检疫费在建批次时就记上：买回来就得开始检疫流程，而这笔钱必须在能出售之前付掉。
+    // 注意：这里【不】记无害化处理费——那是「预估会死几只」的假设，不是已经发生的支出。
+    if (input.quarantinePerDog > 0) {
+      entries.push({ id: newId(), type: 'expense', category: 'quarantine', amount: input.quarantinePerDog, ...baseEntry, dogId })
     }
   }
 
@@ -1903,7 +2001,7 @@ export function Field({
 import { useMemo, useState } from 'react'
 import { useAppData } from '../../state/AppDataContext'
 import { plan, createBatchFromPlan, type PlanInput } from '../../domain/planning'
-import { formatMoney, parseMoney } from '../../domain/money'
+import { formatMoney, fenToYuan, parseMoney } from '../../domain/money'
 import { Field } from '../components/Field'
 
 export function CalculatePage() {
@@ -1912,6 +2010,8 @@ export function CalculatePage() {
   const [purchase, setPurchase] = useState('600')
   const [freight, setFreight] = useState('400')
   const [medical, setMedical] = useState('80')
+  const [quarantine, setQuarantine] = useState(String(fenToYuan(data.settings.quarantinePerDog)))
+  const [disposal, setDisposal] = useState(String(fenToYuan(data.settings.disposalPerDog)))
   const [mortality, setMortality] = useState(String(Math.round(data.settings.expectedMortalityRate * 100)))
   const [target, setTarget] = useState('1200')
   const [created, setCreated] = useState<string | null>(null)
@@ -1921,9 +2021,11 @@ export function CalculatePage() {
     purchasePrice: parseMoney(purchase) ?? 0,
     freight: parseMoney(freight) ?? 0,
     medicalPerDog: parseMoney(medical) ?? 0,
+    quarantinePerDog: parseMoney(quarantine) ?? 0,
+    disposalPerDog: parseMoney(disposal) ?? 0,
     mortalityRate: Math.min(0.99, Math.max(0, (Number(mortality) || 0) / 100)),
     targetPrice: parseMoney(target) ?? 0,
-  }), [n, purchase, freight, medical, mortality, target])
+  }), [n, purchase, freight, medical, quarantine, disposal, mortality, target])
 
   const result = plan(data.settings, input)
 
@@ -1943,8 +2045,14 @@ export function CalculatePage() {
         <Field label="每只收购价" value={purchase} onChange={setPurchase} suffix="元" />
         <Field label="这趟油费 + 笼具" value={freight} onChange={setFreight} suffix="元" />
         <Field label="每只疫苗医疗" value={medical} onChange={setMedical} suffix="元" />
+        <Field label="每只检疫费" value={quarantine} onChange={setQuarantine} suffix="元" />
+        <Field label="每只病死犬处理费" value={disposal} onChange={setDisposal} suffix="元" />
         <Field label="预估死亡率" value={mortality} onChange={setMortality} suffix="%" inputMode="numeric" />
         <Field label="打算卖多少钱一只" value={target} onChange={setTarget} suffix="元" />
+        <p className="mt-2 text-xs text-gray-400">
+          检疫是法定前置：没有《动物检疫合格证明》就出售，按《动物防疫法》第九十七条最高可处货值 15~30 倍罚款，
+          货值不足一万元的处 5 万~15 万，负责人 5 年内不得从事相关活动。这一栏填 0，上面的「低于这个价别卖」就偏低。
+        </p>
       </section>
 
       <section className="mt-4 rounded-xl bg-emerald-600 p-4 text-white shadow-sm">
@@ -3346,6 +3454,7 @@ import { useState } from 'react'
 import { useAppData } from '../../state/AppDataContext'
 import { updateSettings, renamePartner, setPartnerRatio, addCostItem } from '../../domain/actions'
 import { validateSettings } from '../../domain/settlement'
+import { fenToYuan, parseMoney } from '../../domain/money'
 import { Field } from '../components/Field'
 
 export function SettingsPanel() {
@@ -3408,6 +3517,29 @@ export function SettingsPanel() {
           void update(d => updateSettings(d, { expectedMortalityRate: Math.min(99, Math.max(0, pct)) / 100 }))
         }}
       />
+      <Field
+        label="默认每只检疫费"
+        value={String(fenToYuan(s.quarantinePerDog))}
+        suffix="元"
+        onChange={v => {
+          const fen = parseMoney(v)
+          if (fen === null) return
+          void update(d => updateSettings(d, { quarantinePerDog: fen }))
+        }}
+      />
+      <Field
+        label="默认每只病死犬处理费"
+        value={String(fenToYuan(s.disposalPerDog))}
+        suffix="元"
+        onChange={v => {
+          const fen = parseMoney(v)
+          if (fen === null) return
+          void update(d => updateSettings(d, { disposalPerDog: fen }))
+        }}
+      />
+      <p className="mt-1 text-xs text-gray-400">
+        这两项会预填到「算」页面。填 0 表示还不知道——检疫费与抗体检测价格请先向当地动物卫生监督机构问清。
+      </p>
 
       <h3 className="mt-4 text-xs font-semibold text-gray-500">成本项</h3>
       <ul className="mt-1 text-xs text-gray-500">
