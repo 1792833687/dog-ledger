@@ -3967,7 +3967,9 @@ export function quarantineSummary(data: AppData, batchId: string, today: string)
 - Create: `src/domain/channels.ts`
 - Create: `src/domain/channels.test.ts`
 
-**Consumes:** `ChannelId` / `SALES_CHANNELS` / `Money` / `AppData`（`src/domain/types.ts`）；`aliveCount` / `batchTotalCost`（`src/domain/costing.ts`）。
+**Consumes:** `ChannelId` / `SALES_CHANNELS` / `Money` / `AppData`（`src/domain/types.ts`）；**`batchPerDogCostFen`**（本任务在 `src/domain/costing.ts` 里新增，`channels.ts` 从它取批次摊薄成本）与 `aliveCount`（`src/domain/costing.ts:33`）。
+
+> `channels.ts` **不要** import `batchTotalCost`：批次总成本只能经 `batchPerDogCostFen` 取（见行为 1）。
 
 **Interfaces（必须逐字一致）:**
 
@@ -3986,7 +3988,7 @@ export function batchPerDogCostFen(data: AppData, batchId: string): number {
 }
 ```
 
-并把已有的 `dilutedCostFen`（`src/domain/costing.ts:49-56`）最后一行由 `return batchTotalCost(data, dog.batchId) / alive` 改为 `return batchPerDogCostFen(data, dog.batchId)`。它上面两行提前返回（`if (!dog) return own`、`if (alive === 0) return own`）**保持原样**，可观测行为完全不变——已有的 15 个 `costing.test.ts` 测试必须**一字不改地继续通过**。
+并把已有的 `dilutedCostFen`（`src/domain/costing.ts:49-56`）最后一行（`src/domain/costing.ts:55`）由 `return batchTotalCost(data, dog.batchId) / alive` 改为 `return batchPerDogCostFen(data, dog.batchId)`。**注意两个提前返回并不相邻**：`src/domain/costing.ts:52` 是 `if (!dog) return own`，`src/domain/costing.ts:53` 是 `const alive = aliveCount(data, dog.batchId)`，`src/domain/costing.ts:54` 才是 `if (alive === 0) return own`。**这三行全部保持原样**，只改第 55 行；可观测行为完全不变——已有的 15 个 `costing.test.ts` 测试必须**一字不改地继续通过**。
 
 再新建 `src/domain/channels.ts`：
 
@@ -4016,7 +4018,7 @@ export function compareChannels(data: AppData, batchId: string, inputs: ChannelI
 
 **必须满足的行为:**
 
-1. `basePerDogCostFen` 必须来自 `batchPerDogCostFen(data, batchId)`——**本文件不得自己算批次总成本或存活数**。
+1. `basePerDogCostFen` 必须来自 `batchPerDogCostFen(data, batchId)`——**批次总成本只能经 `batchPerDogCostFen` 取，存活数只能经 `aliveCount` 取**，本文件不得再写一遍 `batchTotalCost` 求和或自己数狗（行为 2 要调 `aliveCount`，两者不矛盾：禁止的是"自己算"，不是"调用"）。
 2. `fixedPerDogFen = aliveCount(data, batchId) === 0 ? 0 : fixedCostFen / aliveCount(data, batchId)`。存活数为 0 时不除零、不抛错。
 3. `breakEvenUnitPriceFen = basePerDogCostFen + extraPerDogFen + fixedPerDogFen`。
 4. `perDogProfitFen = unitPriceFen - breakEvenUnitPriceFen`；`isLoss = perDogProfitFen < 0`（**等于 0 不算亏**）。
@@ -4259,13 +4261,17 @@ export function compareChannels(data: AppData, batchId: string, inputs: ChannelI
 
 ### Task 21: 批次改名（消掉两条一模一样的下拉选项）
 
-**为什么有这一项**：Task 17 的实机走查发现——批次名由 `src/ui/pages/CalculatePage.tsx` 自动生成为 `收狗 ${input.n} 只`，狗号又是 `` `${batchName}-${i}` ``（`src/domain/planning.ts:105`）。用户同一天建两个**只数相同**的批次（很常见：上午收 2 只、下午又收 2 只），批次下拉里就会出现**两条读起来完全一样的选项**，狗号也会跨批次重名。账算不错（`id` 唯一、「检」页按批次分开显示），但用户没法在界面上分辨这两个批次，迟早会记错账。这是可用性缺陷，不是数据缺陷。
+**为什么有这一项**：Task 17 的实机走查发现——批次名由 `src/ui/pages/CalculatePage.tsx:44` 自动生成为 `` `收狗 ${input.n} 只` ``，狗号又是 `` `${batchName}-${i}` ``（`src/domain/planning.ts:105`）。用户同一天建两个**只数相同**的批次（很常见：上午收 2 只、下午又收 2 只），批次选择器里就会出现**两条读起来完全一样的选项**，狗号也会跨批次重名。账算不错（`id` 唯一、「检」页按批次分开显示），但用户没法在界面上分辨这两个批次，迟早会记错账。这是可用性缺陷，不是数据缺陷。
+
+> **实际撞在一起的是「检」页那个 `<select>`**（`src/ui/pages/QuarantinePage.tsx:82-90`，选项文本是 `{b.name}（{b.date}）`，同名同日就分不出来）。「狗」页的批次选择器是**按钮列表**（`src/ui/pages/DogsPage.tsx:111-133`），不是下拉。
 
 **Files:**
 - Modify: `src/domain/actions.ts`（**末尾追加**一个动作）
 - Modify: `src/domain/actions.test.ts`（补测试）
 - Modify: `src/ui/pages/DogsPage.tsx`（批次名可改）
 - Modify: `src/ui/pages/CalculatePage.tsx`（默认批次名带上时间，让新建的批次默认就不重名）
+- Modify: `src/ui/planForm.ts`（新增 `localTimeHm`）
+- Modify: `src/ui/planForm.test.ts`（补 `localTimeHm` 的测试）
 
 **Interfaces:**
 - Produces（追加到 `src/domain/actions.ts` 末尾）：
@@ -4273,25 +4279,38 @@ export function compareChannels(data: AppData, batchId: string, inputs: ChannelI
   /** 改某个批次的名字。只改那一批；找不到时原样返回（同一引用）。 */
   export function renameBatch(data: AppData, batchId: string, name: string): AppData
   ```
+- Produces（加到 `src/ui/planForm.ts`，紧挨着已有的 `todayLocalIso`）：
+  ```ts
+  /**
+   * 本机时区的「时:分」，24 小时制、两位补零，例如 "14:07"。
+   * 和 `todayLocalIso` 一样不能用 toISOString()——那是 UTC，东八区会差 8 小时。
+   */
+  export function localTimeHm(now: Date): string
+  ```
+
+> **为什么必须显式指定这个函数**：任务书要求默认批次名带 `${HH}:${MM}`，而仓库里**只有 `todayLocalIso(now: Date): string`（`src/ui/planForm.ts:47`，只返回 `YYYY-MM-DD`），没有任何分钟级的格式化助手**。不指定它叫什么、放哪里，实现者只能自己发明一个，将来就没法统一。放在 `planForm.ts` 里是因为日期与时间的本地化格式化已经都在这个模块。
 
 **必须满足的行为：**
 
 1. `renameBatch` 只改 `data.batches` 里那一批的 `name`；不碰 `dogs`、不碰 `entries`；`batches` 数组顺序不变；`batchId` 不存在时**返回传入的同一个对象引用**（与 `src/domain/actions.ts` 里既有动作保持一致）。
-2. **`renameBatch` 不得追溯修改狗号。** 每只狗的 `code` 是建批次时写死的 `${batchName}-${i}`，它是这批狗的历史标识（对账单、清单、纸质记录上已经这么写了）。改批次名只让**以后**新建的批次好看，不改已有狗号——**这一点必须在代码注释里写清**，否则下一个人会以为是漏了。
+2. **`renameBatch` 不得追溯修改狗号。** 每只狗的 `code` 在**建批次时**就写死了：批量按 `` `${batchName}-${i}` ``（`src/domain/planning.ts:105`），手动补录的狗按 `` `${batch.name}-补${dogs.length + 1}` ``（`src/ui/pages/DogsPage.tsx:314`）。它是这批狗的历史标识（对账单、清单、纸质记录上已经这么写了）。改批次名只让**以后**新建的批次好看，不改已有狗号——**这一点必须在代码注释里写清**，否则下一个人会以为是漏了。
 3. 「狗」页面上批次名要能就地改：点一下名字变成输入框，改完立刻保存（走 `update(d => renameBatch(d, b.id, name))`）。**名字留空或只含空白时不保存**（保留原名），并给一句提示，不要让用户以为改成功了。
-4. `CalculatePage` 建批次时的默认名从 `收狗 ${n} 只` 改成 **`` `收狗 ${n} 只 ${HH}:${MM}` ``**（24 小时制、两位补零，例如 `收狗 2 只 14:07`）。时间取自 `handleCreateBatch` 里**已经存在**的那个 `new Date()`（那个调用已经是事件处理器里的、不在渲染期，符合 `## Global Constraints`），**不要新增第二个 `new Date()`**。同一分钟内建两个同只数批次仍会重名，这是可接受的——第 3 条让用户能自己改。
+4. `CalculatePage` 建批次时的默认名从 `` `收狗 ${input.n} 只` ``（`src/ui/pages/CalculatePage.tsx:44`，注意变量是 `input.n` 不是 `n`）改成 **`` `收狗 ${input.n} 只 ${localTimeHm(now)}` ``**（例如 `收狗 2 只 14:07`）。时间取自 `handleCreateBatch` 里**已经存在**的那个 `new Date()`（`src/ui/pages/CalculatePage.tsx:45` 的 `const date = todayLocalIso(new Date())`——已核实这是该文件里**唯一**一处 `new Date()`，且位于事件处理器内、不在渲染期，符合 `## Global Constraints`），**复用同一个 Date 对象、不要新增第二个 `new Date()`**。同一分钟内建两个同只数批次仍会重名，这是可接受的——第 3 条让用户能自己改。
 5. 界面文案全中文。
 
 **测试要求**（`src/domain/actions.test.ts`，**必须显式 `import { describe, it, expect } from 'vitest'`**）：至少覆盖 —— 改名只影响那一批；不修改原数据；`batchId` 不存在时返回同一引用；`dogs` 与 `entries` 一字未动；**改批次名之后已有狗的 `code` 不变**（这条是给第 2 条钉桩的）。
 
+**测试要求**（`src/ui/planForm.test.ts`，同样必须显式 import）：`localTimeHm` 至少覆盖 —— 个位数的小时与分钟都补零（`new Date(2026, 9, 3, 9, 7)` → `'09:07'`）；下午用 24 小时制（`new Date(2026, 9, 3, 14, 7)` → `'14:07'`）；**`new Date(2026, 9, 3, 0, 0)` → `'00:00'`**（午夜不被当成 12 或 24）。
+
 **Steps:**
 - [ ] **Step 1**：先给 `src/domain/actions.test.ts` 加测试（TDD），跑一次看它失败。
 - [ ] **Step 2**：实现 `renameBatch`，让测试通过。
-- [ ] **Step 3**：改「狗」页面的批次名入口与 `CalculatePage` 的默认名。
-- [ ] **Step 4**：`npx vitest run` / `npm run build` / `npm run lint` / `git status --short`。
-- [ ] **Step 5**：提交（**显式路径，不要 `git add src`**）：
+- [ ] **Step 3**：给 `src/ui/planForm.test.ts` 加 `localTimeHm` 的测试（TDD），再在 `src/ui/planForm.ts` 里实现它。
+- [ ] **Step 4**：改「狗」页面的批次名入口与 `CalculatePage` 的默认名。
+- [ ] **Step 5**：`npx vitest run` / `npm run build` / `npm run lint` / `git status --short`。
+- [ ] **Step 6**：提交（**显式路径，不要 `git add src`**）：
   ```bash
-  git add src/domain/actions.ts src/domain/actions.test.ts src/ui/pages/DogsPage.tsx src/ui/pages/CalculatePage.tsx
+  git add src/domain/actions.ts src/domain/actions.test.ts src/ui/pages/DogsPage.tsx src/ui/pages/CalculatePage.tsx src/ui/planForm.ts src/ui/planForm.test.ts
   git commit -m "feat(ui): 批次改名与默认批次名去重"
   ```
 
@@ -4300,16 +4319,23 @@ export function compareChannels(data: AppData, batchId: string, inputs: ChannelI
 ### Task 14: 备份安全网 + PWA + 上线
 
 **Files:**
+- Create: `src/ui/backupStatus.ts`（Step 3 写的两个纯函数）
+- Create: `src/ui/backupStatus.test.ts`（Step 1 写的失败测试）
 - Create: `src/ui/components/BackupBanner.tsx`
 - Create: `src/ui/pages/BackupPanel.tsx`（嵌入「报」页面底部）
 - Create: `public/manifest.webmanifest`
+- Create: `public/icon-192.png`
+- Create: `public/icon-512.png`
 - Modify: `src/App.tsx`（挂上备份横幅）
 - Modify: `src/ui/pages/ReportPage.tsx`（底部加备份面板）
+- Modify: `index.html`（`<head>` 里加 manifest 与 apple-touch-icon）
 - Create: `DEPLOY.md`
 
+> `public/icon-192.png` 与 `public/icon-512.png` 是**二进制 PNG**，纯文本工具写不出来——必须用能生成图片的方式产出（例如 Node 脚本生成，或从现有图形导出），不要把 PNG 的字节当文本往里写。
+
 **Interfaces:**
-- Consumes: `exportBackup`、`importBackup`（Task 7）；`useAppData`（Task 8）
-- Produces: `BackupBanner`、`BackupPanel`、`daysSinceBackup(iso: string | null, now: Date): number | null`
+- Consumes: `exportBackup`、`importBackup`（Task 7，实际签名 `(data: AppData): string` / `(json: string): AppData`，`src/storage/backup.ts:7` / `:16`，解析失败**抛 Error**）；`useAppData`（Task 8）；`todayLocalIso(now: Date): string`（`src/ui/planForm.ts:47`）
+- Produces: `BackupBanner`、`BackupPanel`、**`daysSinceBackup(iso: string | null, now: Date): number | null`**、**`shouldWarnBackup(iso: string | null, entryCount: number, now: Date): boolean`**（`shouldWarnBackup` 也被 `BackupBanner` 用，别漏）
 
 - [ ] **Step 1: 写失败测试（备份天数判定）**
 
@@ -4333,10 +4359,10 @@ describe('daysSinceBackup', () => {
 
 describe('shouldWarnBackup', () => {
   it('从未备份且已有数据 → 警告', () => {
-    expect(shouldWarnBackup(null, 5, new Date())).toBe(true)
+    expect(shouldWarnBackup(null, 5, new Date('2026-10-03T09:00:00Z'))).toBe(true)
   })
   it('从未备份但没有数据 → 不警告', () => {
-    expect(shouldWarnBackup(null, 0, new Date())).toBe(false)
+    expect(shouldWarnBackup(null, 0, new Date('2026-10-03T09:00:00Z'))).toBe(false)
   })
   it('3 天前备份过且有数据 → 警告', () => {
     expect(shouldWarnBackup('2026-09-30T08:00:00Z', 5, new Date('2026-10-03T09:00:00Z'))).toBe(true)
@@ -4383,12 +4409,15 @@ Expected: 7 passed
 创建 `src/ui/components/BackupBanner.tsx`：
 
 ```tsx
+import { useState } from 'react'
 import { useAppData } from '../../state/useAppData'
 import { daysSinceBackup, shouldWarnBackup } from '../backupStatus'
 
 export function BackupBanner({ onGoToBackup }: { onGoToBackup: () => void }) {
   const { data } = useAppData()
-  const now = new Date()
+  // 渲染体里不许直接调 new Date()：react(purity) 会拦，本仓门禁是 0 warning。
+  // 唯一能过 lint 的写法就是 useState 惰性初始化（useMemo / useEffect 同样被拦）。
+  const [now] = useState(() => new Date())
   if (!shouldWarnBackup(data.settings.lastBackupAt, data.entries.length, now)) return null
 
   const days = daysSinceBackup(data.settings.lastBackupAt, now)
@@ -4405,6 +4434,8 @@ export function BackupBanner({ onGoToBackup }: { onGoToBackup: () => void }) {
 }
 ```
 
+> **不要写成 `const now = new Date()`。** 这是本任务最容易照抄出错的一处：`react(purity)` 规则会把它标成 warning，而门禁要求 0 warning。`useMemo` 与 `useEffect` 也过不了，只有 `useState` 惰性初始化可以——Step 6 的 `BackupPanel` 用的是同一个写法，两处必须一致。
+
 - [ ] **Step 6: 写备份面板**
 
 创建 `src/ui/pages/BackupPanel.tsx`：
@@ -4415,6 +4446,7 @@ import { useAppData } from '../../state/useAppData'
 import { exportBackup, importBackup } from '../../storage/backup'
 import { daysSinceBackup } from '../backupStatus'
 import { Modal } from '../components/Modal'
+import { todayLocalIso } from '../planForm'
 import type { AppData } from '../../domain/types'
 
 export function BackupPanel() {
@@ -4525,11 +4557,13 @@ export function BackupPanel() {
 
 - [ ] **Step 7: 接线**
 
-在 `src/ui/pages/ReportPage.tsx` 底部加入（同 Task 14 Step 7 的落点规则：**所有** `<section>` 之后、最后那个 `</div>` 之前；本页排行榜那段的 `</section>` 在 JSX 表达式内部，落点是在它的 `)}` 之后）：
+在 `src/ui/pages/ReportPage.tsx` 最外层 `<div>` 的最后、**最后一个 `</div>` 之前**加入：
 
 ```tsx
       <BackupPanel />
 ```
+
+> **落点说明（按 ReportPage.tsx 的实际结构写，不要按 `<section>` 找）。** 这个文件里 **`<section>` 出现 0 次**——所有区块都是 `<div>`。当前结构是：`{ranking.length > 0 && (…)` 这段 JSX 表达式的 `</ul>` 收在 `:177`、片段的 `</>` 收在 `:178`、表达式的 `)}` 收在 `:179`，之后才是最外层 `<div>` 的收尾。Task 13 已经在同一位置挂过 `<SettingsPanel />`（`ReportPage.tsx:181`），**`<BackupPanel />` 紧接在它后面**即可，仍然在最后一个 `</div>` 之前。**不要按"所有 `<section>` 之后"去找——那个描述对不上这个文件。**
 
 并在文件顶部的 import 区加入：
 
@@ -4576,6 +4610,8 @@ import { BackupBanner } from './ui/components/BackupBanner'
 ```
 
 `public/icon-192.png` 与 `public/icon-512.png`：用任意一张 192/512 像素的纯色方块 PNG 即可（可以先用在线工具生成一张写着「狗账」的图，不必追求美观）。
+
+> **这两个文件是二进制 PNG，纯文本工具写不出来。** 不要试图把 PNG 的字节当文本 `write` 进去——那样得到的是一张坏图，PWA 装到手机上会显示空白图标。可行的做法是用一段 Node 脚本（例如零依赖的手写 PNG 编码，或先 `npm i -D sharp` 再 `npm uninstall`）在仓库里生成这两张图，然后 `git add` 二进制文件；**或者**先用占位 PNG 交差并在报告里写明「图标是占位图，需要用户自己换」。两条路都可以，但必须**如实报告你选了哪一条**，不要把坏图当成品交付。
 
 - [ ] **Step 9: 写部署说明**
 
@@ -4625,8 +4661,10 @@ Run: `npm run dev`，手动走一遍完整流程：
 
 - [ ] **Step 11: 提交**
 
+`git add` 的路径必须逐字列出，**不许用 `git add -A` / `git add .` / `git add src`**（见 Global Constraints 与 Task 18/19 的同一要求）。本任务应为：
+
 ```bash
-git add -A
+git add src/ui/backupStatus.ts src/ui/backupStatus.test.ts src/ui/components/BackupBanner.tsx src/ui/pages/BackupPanel.tsx src/App.tsx src/ui/pages/ReportPage.tsx index.html public/manifest.webmanifest public/icon-192.png public/icon-512.png DEPLOY.md
 git commit -m "feat: 备份安全网、PWA 清单与部署说明"
 ```
 
