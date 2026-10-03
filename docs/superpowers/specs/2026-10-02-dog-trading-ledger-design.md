@@ -149,7 +149,7 @@ type LedgerEntry = {
 dogOwnCost(dogId)         = Σ expense(dogId = d).amount
 batchTotalCost(batchId)   = Σ expense(batchId = b).amount   // 含批次层面与单只狗层面
 batchIncome(batchId)      = Σ income(batchId = b).amount
-inStockCount(batchId)     = count(status = 'in_stock')
+inStockCount(batchId)     = count(status = 'in_stock' | 'returned')   // 退狗回到在库（见 3.4 边界规则）
 aliveCount(batchId)       = count(status ≠ 'dead')          // sold 与 returned 都算活着
 deadLoss(batchId)         = Σ dogOwnCost(d) for d.status = 'dead'
 
@@ -160,7 +160,11 @@ remainingFloorPrice(batchId) = max(0, batchTotalCost − batchIncome) / inStockC
 
 // ---- ★ 指标 B：单只狗摊薄成本（复盘用）----
 // 回答："这只狗算上死掉的同伴，真实花了多少钱"
-dilutedCost(dogId) = dogOwnCost(dogId) + deadLoss(batchId) / aliveCount(batchId)
+// 摊的是【整批的钱】÷【还活着的只数】，含运输、病死犬处理这类批次层面的支出。
+// 不能写成 dogOwnCost + deadLoss/alive：那个式子漏掉批次层面的钱，
+// 会让 3.6 案例算出 906.67 而不是 973.33，"真实成本"就名不副实了。
+dilutedCost(dogId) = batchTotalCost(batchId) / aliveCount(batchId)
+                     // aliveCount = 0（整批死光）时退化为 dogOwnCost(dogId)，不得除零
 dogProfit(dogId)   = income(关联到该狗的收入之和) − dilutedCost(dogId)
 
 // ---- 资金三账 ----

@@ -642,7 +642,8 @@ export function batchIncome(data: AppData, batchId: string): Money {
 }
 
 export function inStockCount(data: AppData, batchId: string): number {
-  return dogsOfBatch(data, batchId).filter(d => d.status === 'in_stock').length
+  // 退狗（returned）回到在库：它又站在笼子里了，还得再卖一次，所以进分母。
+  return dogsOfBatch(data, batchId).filter(d => d.status === 'in_stock' || d.status === 'returned').length
 }
 
 /** 存活数：只有 dead 不算活着（sold 与 returned 都算） */
@@ -659,7 +660,9 @@ export function deadLoss(data: AppData, batchId: string): Money {
 
 /**
  * ★ 指标 B：单只狗摊薄成本（单位：分，可能带小数）。
- * 把死狗的直接成本平摊到所有非死亡个体上。
+ * 摊的是【整批的钱】÷【还活着的只数】，所以它也吃进运输、病死犬无害化处理
+ * 这类批次层面的支出 —— 只把钱摊到"看得见的那只狗"身上，算出来的不是真实成本。
+ * 这正是设计文档 3.6 案例给出的 5,840 ÷ 6 = 973.33 的定义。
  * 整批死光时退化为该狗自身直接成本，不会除零。
  */
 export function dilutedCostFen(data: AppData, dogId: string): number {
@@ -668,7 +671,7 @@ export function dilutedCostFen(data: AppData, dogId: string): number {
   if (!dog) return own
   const alive = aliveCount(data, dog.batchId)
   if (alive === 0) return own
-  return own + deadLoss(data, dog.batchId) / alive
+  return batchTotalCost(data, dog.batchId) / alive
 }
 
 /** 挂到单只狗上的收入之和 */
@@ -714,7 +717,7 @@ export function batchSummary(data: AppData, batchId: string): BatchSummary {
   return {
     totalCost,
     income,
-    inStock: dogs.filter(d => d.status === 'in_stock').length,
+    inStock: inStockCount(data, batchId),
     sold: dogs.filter(d => d.status === 'sold').length,
     dead: dogs.filter(d => d.status === 'dead').length,
     returned: dogs.filter(d => d.status === 'returned').length,
@@ -1781,7 +1784,12 @@ export function AppDataProvider({
   children: ReactNode
   storage?: Storage
 }) {
-  const [data, setData] = useState<AppData>(DEFAULT_DATA)
+  // ★ 必须 structuredClone：DEFAULT_DATA 是模块级单例，而且 DEFAULT_SETTINGS.costItems
+  // 与 BUILTIN_COST_ITEMS 是同一个数组对象。直接把它交给 useState 会让界面状态与那个
+  // 常量共享引用——任何一处就地 push / 改字段都会永久污染常量，之后新建的数据与测试也
+  // 会跟着变脏。克隆一次，界面状态就与常量彻底脱钩。
+  // （Task 1 的审查已用探针证实过这个别名：push 之后 BUILTIN_COST_ITEMS.length 4→5。）
+  const [data, setData] = useState<AppData>(() => structuredClone(DEFAULT_DATA))
   const [ready, setReady] = useState(false)
 
   useEffect(() => {
