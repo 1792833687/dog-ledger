@@ -223,6 +223,8 @@ claimable(partnerId)  = (netProfit 累计 × shareRatio(partnerId)) − distribu
 - `inStockCount === 0`（全部售出）→ 不显示指标 A，只显示指标 B 的最终复盘
 - 批次未结束时 `deadLoss` 与 `batchIncome` 都在变，说明**已售出狗的盈亏是浮动的**，界面必须显式标注"按当前损耗率估算"
 - `returned`（退狗）的记账方式：狗回到在库（计入 `inStockCount` 与 `aliveCount`），**已发生的医疗成本不冲销**，同时记一笔 `expense`（类别"售后退款"，金额 = 退回给客户的款）关联到该狗。若狗没要回来，则状态保持 `sold`，只记退款支出。
+- **退回的狗后来又死了 → 那笔退款不冲销。** 这时账上会同时有三笔：`income/售出`(P)、`expense/售后退款`(P)、以及计入 `deadLoss` 的购置成本 C 与已发生医疗成本 M。这是**对的**：P 与 P 相互抵消，真实亏损 = −(C+M)。若再去冲销退款，P 会被当成净收入留下，账面凭空多出一笔 P 的假利润——比不冲销错得更厉害。批次净利按 `income − totalCost` 算（`src/domain/costing.ts:107`），`deadLoss` 只是展示与摊薄的输入，**不参与净利计算**，不会二次扣除。
+- **第一期已知限制：退款记下后没有撤销或改正入口。** `aftercare_refund` 只增不减，金额填错时界面上只能看到「已记退款」。流水纠错（撤销 / 冲销 / 编辑历史流水）**不在第一期范围内**。另外 `src/ui/dogLedger.ts` 的 `refundedCurrentSale` 依赖 `entries` 的**追加顺序**（用数组下标而非 `date` 比先后），将来若引入"编辑 / 删除历史流水"，这两个函数必须同步改。
 - 分红比例之和 ≠ 1：保存设置时校验并拒绝
 
 ### 3.6 关键案例（用于验证算法与用户沟通）
