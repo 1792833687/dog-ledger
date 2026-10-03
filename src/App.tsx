@@ -1,5 +1,6 @@
 import { useState } from 'react'
-import { AppDataProvider, useAppData } from './state/AppDataContext'
+import { AppDataProvider } from './state/AppDataContext'
+import { useAppData } from './state/useAppData'
 import { TabBar } from './ui/TabBar'
 import { DEFAULT_TAB, TABS } from './ui/tabs'
 import type { TabKey } from './ui/tabs'

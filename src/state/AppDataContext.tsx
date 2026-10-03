@@ -1,19 +1,11 @@
-import { createContext, useCallback, useContext, useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
 import type { AppData } from '../domain/types'
 import { DEFAULT_DATA } from '../domain/types'
 import type { Storage } from '../storage/types'
 import { indexedDbStorage, requestPersistentStorage } from '../storage/indexeddb'
 import { loadPersistedData, persistData } from './persistence'
-
-interface AppDataContextValue {
-  data: AppData
-  ready: boolean
-  update: (fn: (d: AppData) => AppData) => void
-  replaceAll: (d: AppData) => void
-}
-
-const AppDataContext = createContext<AppDataContextValue | null>(null)
+import { AppDataContext } from './useAppData'
 
 export function AppDataProvider({
   children,
@@ -74,10 +66,4 @@ export function AppDataProvider({
       {children}
     </AppDataContext.Provider>
   )
-}
-
-export function useAppData(): AppDataContextValue {
-  const ctx = useContext(AppDataContext)
-  if (!ctx) throw new Error('useAppData 必须在 AppDataProvider 内使用')
-  return ctx
 }

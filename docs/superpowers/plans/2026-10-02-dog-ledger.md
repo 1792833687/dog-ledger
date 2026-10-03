@@ -3842,7 +3842,9 @@ export function compareChannels(data: AppData, batchId: string, inputs: ChannelI
 
 **Files:**
 - Create: `src/ui/pages/QuarantinePage.tsx`
-- Modify: `src/App.tsx`（底部标签栏加第 5 个「检」）
+- Modify: `src/ui/tabs.ts`（在 `TABS` 数组的「狗」与「钱」之间插入第 5 项「检」，`key: 'quarantine'`）
+  - 注意：**不要改 `src/App.tsx`**。Task 8 实际实现时把标签注册表抽成了单一数组 `src/ui/tabs.ts`，`App.tsx` 从 `TABS` 里取当前页，加标签只动这一处。
+  - `TabKey` 联合类型也要同步加上 `'quarantine'`，否则 `tabs.ts` 自己编译不过。
 - 需要的子组件自行决定（例如 `src/ui/components/DogQuarantineCard.tsx`）
 
 **Consumes:** `quarantineStatus` / `isSellable` / `preSaleChecklist` / `addDays`（`src/domain/quarantine.ts`，Task 15）；`AppData` / `SALES_CHANNELS`（types.ts）；Task 8 建立的状态容器与保存入口。
