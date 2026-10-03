@@ -232,8 +232,50 @@ describe('判定顺序与边界', () => {
     expect(s.stage).toBe('cert_expired')
   })
 
-  it('有证明但没接种日期 → 判成 unvaccinated（顺序如此：台账缺一条就不能算可售）', () => {
+  // Task 15b 裁定（2026-10-02）：证明分支先于接种日期判定。理由是「证明是免疫与抗体检测
+  // 都已满足的下游产物」——它存在就蕴含上游满足；`rabiesVaccinatedOn` 只是给自己看的便利
+  // 记录，不是出售的前置条件。详见 quarantine.ts 里 quarantineStatus 上方那段注释。
+  it('★ 有有效证明但接种日期不详 → certified 且可售（「证随狗走」的真实场景）', () => {
     const s = quarantineStatus(certifiedDog('d1', { rabiesVaccinatedOn: null }), S, TODAY)
+    expect(s.stage).toBe('certified')
+    expect(s.isSellable).toBe(true)
+    expect(s.label).toBe('可出售')
+    expect(s.nextAction).toBe('已具备检疫证明，可以出售')
+  })
+
+  it('★ 证明已过期且接种日期不详 → cert_expired 且不可售（不再丢成 unvaccinated）', () => {
+    const s = quarantineStatus(
+      certifiedDog('d1', { rabiesVaccinatedOn: null, quarantineCertValidUntil: '2026-09-30' }),
+      S, TODAY,
+    )
+    expect(s.stage).toBe('cert_expired')
+    expect(s.isSellable).toBe(false)
+    expect(s.nextAction).toBe('必须重新申报检疫，不能用旧证出售')
+  })
+
+  it('★ 证明今天到期且接种日期不详 → certified（边界是 < 不是 <=）', () => {
+    const s = quarantineStatus(
+      certifiedDog('d1', { rabiesVaccinatedOn: null, quarantineCertValidUntil: TODAY }),
+      S, TODAY,
+    )
+    expect(s.stage).toBe('certified')
+    expect(s.isSellable).toBe(true)
+  })
+
+  it('★ 有证号但有效期为空 → 不算有证明；接种日期也不详时落到 unvaccinated', () => {
+    const s = quarantineStatus(
+      certifiedDog('d1', { rabiesVaccinatedOn: null, quarantineCertValidUntil: null }),
+      S, TODAY,
+    )
+    expect(s.stage).toBe('unvaccinated')
+    expect(s.isSellable).toBe(false)
+  })
+
+  it('★ 有效期非空但证号是空白 → 同样不算有证明，落到 unvaccinated（两个条件缺一不可）', () => {
+    const s = quarantineStatus(
+      certifiedDog('d1', { rabiesVaccinatedOn: null, quarantineCertNo: '   ' }),
+      S, TODAY,
+    )
     expect(s.stage).toBe('unvaccinated')
     expect(s.isSellable).toBe(false)
   })
@@ -357,8 +399,8 @@ describe('isSellable 只有 certified 为 true，且复用 quarantineStatus', ()
     }
   })
 
-  it('这组样本里恰好两只可售（有效期今天到期的那只也在内）', () => {
-    expect(matrix.filter(d => isSellable(d, S, TODAY)).length).toBe(2)
+  it('★ 这组样本里恰好三只可售（有效期今天到期的那只、接种日期不详但证齐全的那只）', () => {
+    expect(matrix.filter(d => isSellable(d, S, TODAY)).length).toBe(3)
   })
 })
 

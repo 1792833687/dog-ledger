@@ -91,17 +91,27 @@ function nextActionOf(stage: QuarantineStage, daysUntilTestable: number | null, 
  * 推导这只狗当前的检疫阶段。
  *
  * 判定顺序就是下面这个顺序，第一个匹配的即为结果（顺序本身是业务规则，不是实现细节）：
- * 没接种 → 证明过期 → 有有效证明 → 已检测等证明 → 等够天数可送检 → 还在抗体等待期。
+ * **有证明（过期 → cert_expired / 未过期 → certified）→ 没接种 → 已检测等证明 →
+ * 等够天数可送检 → 还在抗体等待期。**
+ *
+ * 「有证明」必须 `certNo` 与 `validUntil` 两个条件都齐：`certNo` 是证明的凭据，
+ * 没有编号就无法把这笔证明与任何一份文件对上（一证多用按货值 15~30 倍罚）。所以只有编号
+ * 没有效期、或只有效期没有编号，都**不算**有证明，继续往下走。
  *
  * 「先判过期再判有效」很容易写反：写反了过期证会被当成有效的可出售证明。
  *
- * 触发一次复核点：**`rabiesVaccinatedOn === null` 时一律判 `unvaccinated`**，即使手里有一张
- * 看起来有效的证明（任务书第 1 条把 `unvaccinated` 排在第一位，设计 §3.7 的表也是这个次序）。
- * 代价是真实的：从繁育基地接手一只「证随狗走、接种日期不详」的狗时，界面会说「先带去接种
- * 狂犬疫苗」并挡住出售 —— 而它其实是能卖的。收益是台账缺一环就不算可售，不会放走一只
- * 检疫链断掉的狗（货值 15~30 倍罚款）。这是一个口径选择，不是笔误；若裁定反过来（有证明
- * 即可售），把 `certNo`/`validUntil` 那个分支挪到最前面即可，`quarantine.test.ts` 里钉住
- * 当前行为的用例会立刻变红，不会静默改变。
+ * **为什么证明分支排在「接种日期」之前**（2026-10-02 裁定，Task 15b）：
+ * 1. 检疫证明本身就是出售的法定许可。《动物防疫法》第二十九条禁止的是「未附有检疫证明」
+ *    而出售；《犬产地检疫规程》5.1 是**逐只出具**动物检疫证明，而要拿到这份证明，规程 3.3
+ *    已经要求「按规定进行狂犬病免疫，并在有效保护期内，且狂犬病免疫抗体检测合格」。
+ *    所以**证明是免疫与抗体检测都已满足的下游产物**——它存在就蕴含上游满足。我们台账里
+ *    `rabiesVaccinatedOn` 那一格是给自己看的便利记录，**不是出售的前置条件**。
+ * 2. 反过来会给出与事实相反的行动指令：从繁育基地接手一只「证随狗走、接种日期不详」的狗
+ *    是真实场景，软件却说「先带去接种狂犬疫苗」并挡住出售——它会推动用户为一只已经合法的狗
+ *    白花钱打一针，同时让台账看起来是坏的。
+ * 3. 反过来还会丢信息：「证明已过期、但接种日期没填」的狗会被判成 `unvaccinated`
+ *    （= 从没打过疫苗），而不是 `cert_expired`（= 必须重新申报检疫）。后者才是用户真正
+ *    需要知道的下一步。
  */
 export function quarantineStatus(dog: Dog, settings: Settings, today: string): QuarantineStatus {
   const vaccinatedOn = dog.rabiesVaccinatedOn
@@ -111,11 +121,11 @@ export function quarantineStatus(dog: Dog, settings: Settings, today: string): Q
   let stage: QuarantineStage
   let daysUntilTestable: number | null = null
 
-  if (vaccinatedOn === null) {
-    stage = 'unvaccinated'
-  } else if (certNo !== '' && validUntil !== null) {
+  if (certNo !== '' && validUntil !== null) {
     // 证明编号与有效期齐了才算「有证明」；过期判定必须排在 certified 前面
     stage = validUntil < today ? 'cert_expired' : 'certified'
+  } else if (vaccinatedOn === null) {
+    stage = 'unvaccinated'
   } else if (dog.antibodyTestedOn !== null) {
     stage = 'waiting_cert'
   } else if (daysBetween(vaccinatedOn, today) >= settings.rabiesWaitDays) {
