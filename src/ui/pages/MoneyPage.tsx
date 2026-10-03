@@ -1,11 +1,13 @@
 import { useState } from 'react'
 import { useAppData } from '../../state/useAppData'
 import { poolBalance, advanceBalance } from '../../domain/ledger'
-import { addExpense, addInjection, addIncome, addReimbursement, addDistribution } from '../../domain/actions'
-import { formatMoney, parseMoney } from '../../domain/money'
+import { formatMoney } from '../../domain/money'
 import { Modal } from '../components/Modal'
 import { todayLocalIso } from '../planForm'
-import { TYPE_LABEL, canSubmit, amountInvalid, entryLabel, needsPartner, partnerName } from '../moneyBook'
+import {
+  TYPE_LABEL, canSubmit, amountInvalid, entryLabel, needsPartner, partnerName,
+  overAdvance, overAdvanceHint, applyBooking,
+} from '../moneyBook'
 import type { BookDialog } from '../moneyBook'
 
 /**
@@ -35,6 +37,10 @@ export function MoneyPage() {
   const recent = [...data.entries].reverse().slice(0, 60)
   const partners = data.settings.partners
   const missingPartner = dialog !== null && needsPartner(dialog) && partnerId === ''
+  // 被选中那个人当前的垫付余额。报销的上限由它决定 —— 所以余额必须按选中的人算，
+  // 算错人就会放过一笔超报（或者拦住一笔正常报销）。
+  const advanceFen = advanceBalance(data, partnerId)
+  const over = dialog !== null && overAdvance(dialog, amount, advanceFen)
 
   function close() {
     setDialog(null); setAmount(''); setNote('')
@@ -42,24 +48,12 @@ export function MoneyPage() {
 
   function submit() {
     if (dialog === null) return
-    // 金额解析不出、或者该指明归属人却没有人可选，就什么也不写。
-    // 判定与下面按钮的 disabled 共用 canSubmit，避免「按钮亮着但点了没反应」。
-    if (!canSubmit(dialog, amount, partnerId)) return
-    const fen = parseMoney(amount)
-    if (fen === null) return
-    const type = dialog
-    // switch 覆盖 BookDialog 的全部成员且没有 default：
-    // 将来多一种记账弹窗，tsc 会在这里报「函数可能不返回 AppData」，
-    // 而不是静默地少记一笔账。
-    void update(d => {
-      switch (type) {
-        case 'expense': return addExpense(d, { batchId: null, dogId: null, category, amount: fen, paidBy, date: today, note })
-        case 'injection': return addInjection(d, partnerId, fen, today, note)
-        case 'income': return addIncome(d, fen, today, note)
-        case 'reimbursement': return addReimbursement(d, partnerId, fen, today)
-        case 'distribution': return addDistribution(d, partnerId, fen, today)
-      }
-    })
+    // 判定与下面按钮的 disabled 共用 canSubmit（`applyBooking` 内部也再判一次）。
+    // 通不过就什么也不写：金额解析不出、该指明归属人却没人可选、报销超过垫付。
+    if (!canSubmit(dialog, amount, partnerId, advanceFen)) return
+    void update(d => applyBooking(d, {
+      dialog, amountInput: amount, partnerId, category, paidBy, note, date: today,
+    }))
     close()
   }
 
@@ -142,6 +136,15 @@ export function MoneyPage() {
           <p className="mt-1 text-xs text-red-500">金额只能填数字，例如 1200 或 1200.50</p>
         )}
 
+        {/* 两条红色提示互斥：金额解析不出来时 overAdvance 恒为 false，归上面那条管。 */}
+        {over && <p className="mt-1 text-xs text-red-500">{overAdvanceHint(advanceFen)}</p>}
+
+        {dialog === 'reimbursement' && partnerId !== '' && !amountInvalid(amount) && !over && (
+          <p className="mt-1 text-xs text-gray-500">
+            {partnerName(partners, partnerId)} 现在垫付了 {formatMoney(advanceFen)}
+          </p>
+        )}
+
         {dialog === 'expense' && (
           <>
             <select
@@ -190,7 +193,7 @@ export function MoneyPage() {
         <button
           type="button"
           className="mt-3 w-full rounded-xl bg-emerald-600 py-3 text-sm font-semibold text-white disabled:opacity-40"
-          disabled={dialog === null || !canSubmit(dialog, amount, partnerId)}
+          disabled={dialog === null || !canSubmit(dialog, amount, partnerId, advanceFen)}
           onClick={submit}
         >
           记下

@@ -1,5 +1,7 @@
-import type { CostItemDef, EntryType, Partner } from '../domain/types'
-import { parseMoney } from '../domain/money'
+import type { AppData, CostItemDef, EntryType, Money, Partner } from '../domain/types'
+import { parseMoney, formatMoney } from '../domain/money'
+import { addExpense, addInjection, addIncome, addReimbursement, addDistribution } from '../domain/actions'
+import { advanceBalance } from '../domain/ledger'
 
 /**
  * 「钱」页面的显示与提交判定。抽出来是为了能单测：这里的每一处判错都会直接
@@ -82,15 +84,46 @@ export function needsPartner(dialog: BookDialog): boolean {
 }
 
 /**
- * 「记下」按钮能不能用。两个条件缺一不可：
- * 金额必须解析得出「分」，需要归属人的类型必须真的有归属人。
+ * 「记下」按钮能不能用。三个条件缺一不可：
+ * 金额必须解析得出「分」；需要归属人的类型必须真的有归属人；报销不能超过垫付。
  *
  * 判定与 `submit()` 里的守卫共用这一个函数：两边各写一遍的话，
  * 迟早出现「按钮亮着但点了没反应」或者「按钮灰着但其实能记」。
+ *
+ * `advanceFen` 必须是**被选中那个人**当前的垫付余额（`advanceBalance(data, partnerId)`），
+ * 只有 `reimbursement` 用得上；传错人的余额会算错账。
  */
-export function canSubmit(dialog: BookDialog, amountInput: string, partnerId: string): boolean {
+export function canSubmit(
+  dialog: BookDialog,
+  amountInput: string,
+  partnerId: string,
+  advanceFen: Money,
+): boolean {
   if (parseMoney(amountInput) === null) return false
-  return !needsPartner(dialog) || partnerId !== ''
+  if (needsPartner(dialog) && partnerId === '') return false
+  return !overAdvance(dialog, amountInput, advanceFen)
+}
+
+/**
+ * 报销额是否超过了这个人当前的垫付余额（`ledger.ts:32` 的 `advanceBalance` 是纯减法，
+ * 超报会让「垫付未还」变成负数，同时池子被多扣一笔）。
+ *
+ * 只有 `reimbursement` 有这条上限：支出超过任何余额都是正常的，
+ * 注资与分红也没有「上限」这个概念。
+ *
+ * 金额解析不出来时返回 `false` —— 那种情况归 `amountInvalid` 管，
+ * 两条红色提示绝不能同时出现（用户会以为填错了两个地方）。
+ */
+export function overAdvance(dialog: BookDialog, amountInput: string, advanceFen: Money): boolean {
+  if (dialog !== 'reimbursement') return false
+  const fen = parseMoney(amountInput)
+  if (fen === null) return false
+  return fen > advanceFen
+}
+
+/** 超报时的中文提示。必须把「现在只垫付了多少」说出来，否则用户不知道该改成多少。 */
+export function overAdvanceHint(advanceFen: Money): string {
+  return `该合伙人现在只垫付了 ${formatMoney(advanceFen)}，报销不能超过这个数`
 }
 
 /**
@@ -99,4 +132,51 @@ export function canSubmit(dialog: BookDialog, amountInput: string, partnerId: st
  */
 export function amountInvalid(amountInput: string): boolean {
   return amountInput.trim() !== '' && parseMoney(amountInput) === null
+}
+
+/** 记账弹窗里用户填的那张表。 */
+export type BookingDraft = {
+  dialog: BookDialog
+  /** 用户输入的金额原文，还没解析。 */
+  amountInput: string
+  /** 钱的归属人：注资的注入人、报销与分红的收款人。 */
+  partnerId: string
+  /** 只有支出用得上：`CostItemDef.id`。 */
+  category: string
+  paidBy: 'pool' | string
+  note: string
+  /** `'YYYY-MM-DD'`。域层不取时间，一律由界面传进来。 */
+  date: string
+}
+
+/**
+ * 把弹窗里填的东西写进账。判定不过就**原样返回传入的 `data`**（同一个引用），
+ * 一分钱都不写 —— 让「按钮灰着」与「点了真的不写账」由同一处决定。
+ *
+ * 垫付余额在这里自己算（按 `draft.partnerId`），调用方不需要、也不该把余额传进来：
+ * 少一个能传错人的参数。
+ */
+export function applyBooking(data: AppData, draft: BookingDraft): AppData {
+  const advanceFen = advanceBalance(data, draft.partnerId)
+  if (!canSubmit(draft.dialog, draft.amountInput, draft.partnerId, advanceFen)) return data
+  const fen = parseMoney(draft.amountInput)
+  if (fen === null) return data
+  // switch 覆盖 BookDialog 的全部成员且没有 default：将来多一种记账弹窗，
+  // tsc 会在这里报「函数可能不返回 AppData」，而不是静默地少记一笔账。
+  switch (draft.dialog) {
+    case 'expense':
+      return addExpense(data, {
+        batchId: null,
+        dogId: null,
+        category: draft.category,
+        amount: fen,
+        paidBy: draft.paidBy,
+        date: draft.date,
+        note: draft.note,
+      })
+    case 'injection': return addInjection(data, draft.partnerId, fen, draft.date, draft.note)
+    case 'income': return addIncome(data, fen, draft.date, draft.note)
+    case 'reimbursement': return addReimbursement(data, draft.partnerId, fen, draft.date)
+    case 'distribution': return addDistribution(data, draft.partnerId, fen, draft.date)
+  }
 }
