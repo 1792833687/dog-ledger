@@ -20,6 +20,10 @@
 - **渠道与检疫字段必须真正用上（修订二）**：`Batch.plannedChannel` 与 `Dog` 的 6 个检疫字段（`rabiesVaccinatedOn` / `antibodyTestedOn` / `antibodyReportNo` / `quarantineCertNo` / `quarantineCertIssuedOn` / `quarantineCertValidUntil`）都是**必填**。任何创建 `Batch` 的地方都要给 `plannedChannel` 赋值（默认 `'undecided'`）；任何创建 `Dog` 的地方都要带上这 6 个字段（未接种/未检测/无证明用 `null`，编号用 `''`）。**`tsc` 会因此报错——这是故意的，不要用 `as any` 或 `@ts-expect-error` 绕开。**
 - **检疫证明是出售的硬门槛**：`isSellable()` 只在 `certified` 阶段返回 `true`。依据见 `docs/compliance/2026-10-02-犬只交易合规要点-法规篇.md`——一证多用（数量超出证载明部分、种类不符、使用转让的证明）按「未经检疫」处理，落进货值 15~30 倍罚款那一档，负责人 5 年禁业。
 - **`domain/` 里任何函数都不得调用 `new Date()`**：需要"今天"时一律由调用方把 `today: string`（`'YYYY-MM-DD'`）作为参数传进来。这让检疫阶段推导可测试，也避免"过期"的判定在不同时区下静默漂移。
+- **「还在我们账上的狗（在库）」= `status === 'in_stock' || status === 'returned'`，全仓统一用这个口径，不要只写 `in_stock`。** 设计文档 `:156-157` 明确 `inStockCount` 与 `aliveCount` 都把 `returned` 当成站在笼子里的活狗（退狗回到在库、已发生的医疗成本不冲销）。所以**能卖出的、能记死亡的、要进出栏前检查清单的、要进检疫阶段统计的，都是 `in_stock` 或 `returned`**：退回的狗还站在笼子里，它会病会死，也还得再卖一次。
+  - 反例（Task 10 第一版真实踩过）：`markDogDead` 的守卫写成 `dog.status !== 'in_stock'`、界面按钮写成 `d.status === 'in_stock'`，合起来导致**退回的狗既卖不掉、也记不了死亡**，与 `costing.ts` 把它算进成本分母的口径自相矛盾。
+  - 真正要挡住的是这两种：`sold`（已经卖掉、收入已入账、狗不在我们账上，它此后的死活不是我们的损失）与 `dead`（已经死了，不重复记）。
+  - 「钱退了但狗没要回来」的状态**保持 `sold`**（设计文档 `:225`），不要在那种情况下改成 `returned`。
 - **UI 层要"今天"，用 `todayLocalIso(new Date())`（`src/ui/planForm.ts`），绝不要 `new Date().toISOString().slice(0, 10)`。** 后者是 UTC，东八区晚上 8 点后返回的是昨天——"今天卖的狗"会被记在昨天，检疫的"有效期到哪天"也会跟着错一天。页面里统一 `import { todayLocalIso } from '../planForm'`。
 - **UI 层不能在渲染体里调 `new Date()`；实测唯一能过 lint 的写法是 `useState` 的惰性初始化。** 本仓门禁是 `npm run lint` 0 warning，而 `react(purity)` 会拦下渲染体里的 `new Date()`。四种写法已用 `npx oxlint`（116 rules）逐一实测：
   - ✗ `const today = todayLocalIso(new Date())` → `react(purity): Cannot call impure function during render`
@@ -2221,7 +2225,8 @@ git commit -m "feat(ui): 决策台页面"
 > **【控制器实机走查结果（CDP + 真实 IndexedDB）：Task 10 返工清单】**
 > 第一版实现（`2a7cb1f`）的**基本流程是通的**——实机走完：建批次 → 批次详情显示「去向：未定」→ 补录 3 只狗 → 记一笔 ¥400 支出（总成本 ¥400）→ 卖出一只 ¥1200（已收款 ¥1,200、显示「售价 ¥1,200 · 赚 ¥1,066.67」）→ 刷新后数据都在、不卡在「正在载入」。非法金额（`abc`、`1200元`）会显示中文错误并让提交按钮变灰，且**点下去确实没写账**（流水数不变）。但实机点出下面四条：
 > 1. **已售的狗还能被标成死亡（账目被污染）** —— `DogsPage.tsx:200` 的条件是 `d.status !== 'dead'`，所以「已售」的卡上同时出现「死亡」和「退狗」。实测点「死亡」把 `sold` 覆盖成 `dead`，而那笔 `income/sale` 流水留在账上一动不动 → 那只狗的购置成本从此计入「死亡损耗」，收入却还挂着，**批次盈亏直接是错的**。又因为 `dead` 的卡上一个按钮都没有，**点错了在界面里再也改不回来**。
->    修法（两处都要）：`src/domain/actions.ts` 的 `markDogDead` 加守卫——`const dog = data.dogs.find(d => d.id === dogId); if (!dog || dog.status !== 'in_stock') return data`；界面把条件改成 `d.status === 'in_stock'`。在 `actions.test.ts` 里补「对已售的狗调 `markDogDead` 返回原数据不变」的用例。
+>    修法（两处都要）：`src/domain/actions.ts` 的 `markDogDead` 守卫改成 `const dog = data.dogs.find(d => d.id === dogId); if (!dog || (dog.status !== 'in_stock' && dog.status !== 'returned')) return data`（能记死亡的 = 还在我们账上的活狗；`sold` 的收入已入账、狗已不在我们账上，其死不是我们的损失）；界面「死亡」按钮的条件改成 `d.status === 'in_stock' || d.status === 'returned'`。**「卖出」按钮必须用同一个条件**——只写 `=== 'in_stock'` 会让退回的狗再也卖不出去（设计文档 `:156` 的「退狗回到在库」就是要它能再卖一次）。在 `actions.test.ts` 里补：对已售的狗调 `markDogDead` 返回原数据不变；对退回的狗调它能变 `dead`；退回的狗能被再次卖出。
+>    另见 `## Global Constraints` 里「还在我们账上的狗（在库）」那一条。
 > 2. **退狗没有记退款支出（违反设计文档）** —— 设计文档 §3.4 第 225 行与 §6 第 362 行都写明：`returned` 的记账 = 狗回到在库（计入 `inStockCount` 与 `aliveCount`）+ 已发生的医疗成本不冲销 + **另记一笔 `expense`（类别「售后退款」，金额 = 退回给客户的款）关联到该狗**。而 `DogsPage.tsx:213` 只调了 `setDogStatus(x, d.id, 'returned')`，**退回给客户的那笔钱根本没进账**，账上会显示一笔根本没赚到的利润。
 >    修法：点「退狗」弹 Modal 问「退回给客户多少钱」→ 确认后同时 `setDogStatus(..., 'returned')` **和** `addExpense({ batchId, dogId: d.id, category: 'aftercare_refund', amount, paidBy: 'pool', date: todayIso(), note })`（`aftercare_refund`「售后退款」是 `src/domain/types.ts:163` 的内置项）。设计文档还要第二种情况——**钱退了但狗没要回来** → 状态保持 `sold`、只记退款支出，所以再加一个按钮「钱退了，狗没回来」走同一个 Modal 但只记支出、不改状态。
 > 3. **死亡 / 退回的狗要有纠错入口** —— 设计文档 §4 第 308 行写的是「状态点一下即改」，现在 `dead` 是单向陷阱（一个按钮都不剩），不符合这条。给 `dead` 加「记错了，改回在库」→ `setDogStatus(..., 'in_stock')`；给 `returned` 加「狗又要回来了」→ 改回 `in_stock`。
@@ -3842,8 +3847,8 @@ export function quarantineSummary(data: AppData, batchId: string, today: string)
 3. `isSellable(dog, settings, today)` **只有** `stage === 'certified'` 时为 `true`，实现上直接返回 `quarantineStatus(...).isSellable`——**不得另写一套判定**。
 4. `daysUntilTestable`：仅在 `waiting_antibody` 时 = `settings.rabiesWaitDays - daysBetween(dog.rabiesVaccinatedOn, today)`（正数）；其余阶段为 `null`。
 5. `certExpiresIn(dog, today)`：`quarantineCertValidUntil` 非 `null` 时返回 `daysBetween(today, quarantineCertValidUntil)`（可能为负，表示已过期），否则 `null`。
-6. `preSaleChecklist`：遍历该批次所有狗（用 `dogsOfBatch`），`sellable` 收 `isSellable === true` 的，`blocked` 收其余的并带上完整 `status`。**死狗（`status === 'dead'`）也留在 `blocked` 里**——它当然不可卖，但在这里过滤掉会让清单数字与批次只数对不上（界面文案由 UI 决定）。
-7. `quarantineSummary` 返回的 `Record<QuarantineStage, number>` **6 个 key 必须全部存在**（没有的填 0），这样界面可以直接遍历。
+6. `preSaleChecklist`：**遍历该批次里「还在我们账上」的狗**——即 `status` 为 `in_stock` 或 `returned`（见 `## Global Constraints` 里「还在我们账上的狗（在库）」那一条；`returned` 是退回来的狗，它还站在笼子里，也要出栏）。`sellable` 收 `isSellable === true` 的，`blocked` 收这些狗里其余的并带上完整 `status`（死狗与已售狗**不在**这个清单里——它们根本不在笼子里，把它们算成「不能卖」会让「N 只里有 M 只不能卖」这句话失去意义；界面文案因此是「在库 N 只里有 M 只不能卖」）。
+7. `quarantineSummary` 返回的 `Record<QuarantineStage, number>` **6 个 key 必须全部存在**（没有的填 0），这样界面可以直接遍历。**它也只统计在库的狗**（`in_stock` / `returned`）——检疫阶段是"这只狗现在能不能卖"的状态，已经卖掉或已经死掉的狗没有当下阶段可言。
 8. **日期算术不得依赖本地时区**。实现照这个写：
    ```ts
    export function addDays(isoDate: string, days: number): string {
@@ -3863,7 +3868,7 @@ export function quarantineSummary(data: AppData, batchId: string, today: string)
     - `certified` → 「可出售」/「已具备检疫证明，可以出售」
     - `cert_expired` → 「检疫证明已过期」/「必须重新申报检疫，不能用旧证出售」
 
-**测试要求**：`src/domain/quarantine.test.ts` 至少覆盖 6 个阶段各一例；上面第 2 条的 4 个边界；`preSaleChecklist` 的「8 只里 3 只没有有效证明」案例（断言 `blocked.length === 3` 且正是那 3 只）；`quarantineSummary` 的 6 个 key 齐全；`certExpiresIn` 对无证明返回 `null`。测试一律显式 `import { describe, it, expect } from 'vitest'`（仓库没有 `vitest/globals` 类型，裸写会让 `tsc -b` 报 TS2593/TS2304）。
+**测试要求**：`src/domain/quarantine.test.ts` 至少覆盖 6 个阶段各一例；上面第 2 条的 4 个边界；`preSaleChecklist` 的「8 只里 3 只没有有效证明」案例（断言 `blocked.length === 3` 且正是那 3 只）；**`preSaleChecklist` 与 `quarantineSummary` 都只统计在库的狗**——造一个「1 只已售 + 1 只已死 + 2 只在库」的批次，断言清单里只有那 2 只、`quarantineSummary` 6 个 key 之和 = 2；**`returned` 的狗必须出现在 `preSaleChecklist` 里**（它是退回来的活狗，还要再卖一次）；`quarantineSummary` 的 6 个 key 齐全；`certExpiresIn` 对无证明返回 `null`。测试一律显式 `import { describe, it, expect } from 'vitest'`（仓库没有 `vitest/globals` 类型，裸写会让 `tsc -b` 报 TS2593/TS2304）。
 
 **Steps:**
 - [ ] **Step 0**：`git log --oneline -3` 确认工作区干净；read `src/domain/types.ts`（拿到 `Dog` / `Settings` 的确切字段名）与 `src/domain/costing.ts`（`dogsOfBatch` 签名）。字段名以代码为准，本任务书里的名字若与代码不符，**以代码为准并报告差异**。
@@ -3981,7 +3986,7 @@ export function compareChannels(data: AppData, batchId: string, inputs: ChannelI
 **必须满足的行为:**
 
 1. 页面顶部是批次选择器，默认选中**最近创建的批次**（`createdAt` 最大者）。没有批次时显示空状态：「先去「算」页面建一个批次。」
-2. 每只狗一张卡片，显示：编号、`status.label`、`status.nextAction`、`waiting_antibody` 时的「还要等 N 天」（用 `daysUntilTestable`）、检疫证明编号、证明有效期、以及 `certExpiresIn` 的天数（负值显示「已过期 N 天」）。
+2. **每只在库的狗（`in_stock` / `returned`）一张卡片**（见 `## Global Constraints` 里「还在我们账上的狗（在库）」那一条）——已售与已死的狗不出现在这一页，它们没有当下阶段可言，摆在上面只会把「还要准备什么」这件事搅浑。卡片显示：编号、`status.label`、`status.nextAction`、`waiting_antibody` 时的「还要等 N 天」（用 `daysUntilTestable`）、检疫证明编号、证明有效期、以及 `certExpiresIn` 的天数（负值显示「已过期 N 天」）。`returned` 的狗额外打一个「退回」标记，让人知道它为什么又回到清单上。
 3. 卡片默认**折叠**，只露出阶段标签 + 一个快捷动作按钮；展开后是 6 个字段的编辑表单：
    - `rabiesVaccinatedOn` / `antibodyTestedOn` / `quarantineCertIssuedOn` / `quarantineCertValidUntil`：`<input type="date">`
    - `antibodyReportNo` / `quarantineCertNo`：文本输入
@@ -3991,9 +3996,10 @@ export function compareChannels(data: AppData, batchId: string, inputs: ChannelI
    - `ready_to_test` → 「今天已送检」：把 `antibodyTestedOn` 设成今天
    - `waiting_cert` → 「已有证明」：展开表单并聚焦 `quarantineCertNo`
    - 其余阶段不给快捷按钮
-5. 页面底部是 `preSaleChecklist` 的结果：
-   - 全部可卖 → 绿色确认块：「这批 N 只全部具备有效检疫证明，可以出售。」
-   - 有 blocked → 醒目警告块，标题「N 只里有 M 只不能卖」，逐条列出狗编号 + 阶段原因，并固定附一句：「检疫证明与狗不一致（数量超出证明载明部分、种类不符、使用别人的证明）会被按『未经检疫』处理，罚款是货值的 15~30 倍。」
+5. 页面底部是 `preSaleChecklist` 的结果。**清单与统计都只覆盖在库的狗（`in_stock` / `returned`），文案里要写明「在库」**，不要把已售/已死的狗算进分母：
+   - 全部可卖 → 绿色确认块：「这批在库的 N 只全部具备有效检疫证明，可以出售。」
+   - 有 blocked → 醒目警告块，标题「在库 N 只里有 M 只不能卖」，逐条列出狗编号 + 阶段原因，并固定附一句：「检疫证明与狗不一致（数量超出证明载明部分、种类不符、使用别人的证明）会被按『未经检疫』处理，罚款是货值的 15~30 倍。」
+   - 在库一只都没有 → 「这一批目前没有在库的狗。」
 6. **「今天」从哪来**：页面内部取一次当天并格式化成 `'YYYY-MM-DD'`。**这是 UI 层，允许用 `new Date()`；`domain/` 里不允许**（见 Global Constraints）。用已经写好并测过的 `todayLocalIso`（`src/ui/planForm.ts:47`，内部就是按本机时区拼的），**不要用 `toISOString()`**（按 UTC 算，晚上会差一天）。但这个页面**渲染时就需要 today**（每只狗的阶段判定要用），所以不能用「包成函数、只在处理器里调」的办法——`react(purity)` 会拦下渲染体里的 `new Date()` 和 `useMemo`，`useEffect` + `setToday` 又会被 `react(set-state-in-effect)` 拦下。**实测唯一能过门禁的写法是 `useState` 的惰性初始化**：
    ```ts
    import { useState } from 'react'
