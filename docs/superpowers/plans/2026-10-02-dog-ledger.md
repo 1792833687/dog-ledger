@@ -4147,14 +4147,14 @@ export function compareChannels(data: AppData, batchId: string, inputs: ChannelI
 2. 展开后，对 `SALES_CHANNELS` 里除 `undecided` 外的 **8 条渠道**各一行，每行三个输入：**预期单价** / **每只额外成本** / **该渠道固定成本**（都走 `parseMoney`，留空按 0）。
 3. 每行实时显示 **保本单价** 与 **每只利润**。`isLoss` 为 true 的行标红并写「亏」，否则标绿。
 4. 区块顶部有**存活数**输入（默认取计划里的 `count × (1 − mortalityRate)` 向上取整），因为它决定固定成本摊到几只上。这个数字要能手动改。
-5. 渠道对照**必须调用 `compareChannels`**，界面里不得出现 `base + extra + fixed / n` 这类自己算的式子。**「算」页还没有真实批次时**，用 `{ batches: [{ id: '__plan__', ... }], dogs: [], ledger: [] }` 这样的临时 `AppData`（批次内含一条每只成本 = 决策台算出的每只成本的支出流水），再调用 `compareChannels`——**成本只能有一处算法**。实现时若发现更干净的做法，可以改，但必须满足"界面里没有第二套成本公式"。
+5. 渠道对照**必须调用 `compareChannels`**，界面里不得出现 `base + extra + fixed / n` 这类自己算的式子。**「算」页还没有真实批次时**，用 `{ version: 1, settings: data.settings, batches: [{ id: '__plan__', ... }], dogs: [], entries: [] }` 这样的临时 `AppData`（批次内含一条每只成本 = 决策台算出的每只成本的支出流水），再调用 `compareChannels`——**成本只能有一处算法**。（注意 `AppData` 的字段是 `entries` 不是 `ledger`，且 `version`/`settings` 也是必填，见上面的派发前审计。）实现时若发现更干净的做法，可以改，但必须满足"界面里没有第二套成本公式"。
 6. 「一键存为批次」时，把用户在渠道对照里**选中的那一条**（默认 `undecided`）写进 `batch.plannedChannel`。
 7. 批次详情页显示「计划去向：宠物店」，可点击修改（下拉列 `SALES_CHANNELS`），改完立刻保存。
 8. 金额显示一律走 `formatMoney`（只在界面边界四舍五入）。
 9. 界面文案全中文。
 
 **Steps:**
-- [ ] **Step 0**：read `src/ui/pages/CalculatePage.tsx` 与批次详情页，确认现有 `input` useMemo 与「存为批次」的调用链。
+- [ ] **Step 0**：read `src/ui/pages/CalculatePage.tsx` 与 `src/ui/pages/DogsPage.tsx`（批次详情就在后者的详情视图里），确认现有 `input` useMemo 与「存为批次」的调用链。
 - [ ] **Step 1**：实现渠道对照区块。
 - [ ] **Step 2**：把 `plannedChannel` 接进建批次与批次详情。
 - [ ] **Step 3**：`npx vitest run` / `npm run build` / `npm run lint`。
