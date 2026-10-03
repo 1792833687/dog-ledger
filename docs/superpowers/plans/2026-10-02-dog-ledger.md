@@ -1034,6 +1034,15 @@ describe('validateSettings', () => {
   it('没有合伙人时报错', () => {
     expect(validateSettings({ ...DEFAULT_SETTINGS, partners: [] })).toBe('至少需要一个合伙人')
   })
+
+  // 合规成本项（检疫 / 无害化处理）不许填负数——负数会让保本价被低估，是危险的方向。
+  it('检疫费为负时报错', () => {
+    expect(validateSettings({ ...DEFAULT_SETTINGS, quarantinePerDog: -1 })).toBe('检疫费不能为负')
+  })
+
+  it('病死犬处理费为负时报错', () => {
+    expect(validateSettings({ ...DEFAULT_SETTINGS, disposalPerDog: -1 })).toBe('病死犬处理费不能为负')
+  })
 })
 ```
 
@@ -1114,7 +1123,7 @@ export function validateSettings(settings: Settings): string | null {
 - [ ] **Step 4: 跑测试确认通过**
 
 Run: `npx vitest run src/domain/settlement.test.ts`
-Expected: 8 passed
+Expected: 9 passed
 
 - [ ] **Step 5: 提交**
 
@@ -1442,12 +1451,12 @@ export function createBatchFromPlan(
 - [ ] **Step 4: 跑测试确认通过**
 
 Run: `npx vitest run src/domain/planning.test.ts`
-Expected: 14 passed
+Expected: 18 passed
 
 - [ ] **Step 5: 跑全量测试**
 
 Run: `npx vitest run`
-Expected: 全部 passed（约 60 个）
+Expected: 全部 passed（约 70 个）
 
 - [ ] **Step 6: 提交**
 
@@ -3694,7 +3703,7 @@ export function shouldWarnBackup(iso: string | null, entryCount: number, now: Da
 - [ ] **Step 4: 跑测试确认通过**
 
 Run: `npx vitest run src/ui/backupStatus.test.ts`
-Expected: 8 passed
+Expected: 7 passed
 
 - [ ] **Step 5: 写备份横幅**
 
