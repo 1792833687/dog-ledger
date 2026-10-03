@@ -3812,9 +3812,18 @@ Run: `npm run dev` → 手动：展开设置 → 把「我」改成真名 → �
 - [ ] **Step 8: 提交**
 
 ```bash
-git add src
+git add src/ui/pages/SettingsPanel.tsx src/ui/pages/ReportPage.tsx src/domain/actions.ts src/domain/actions.test.ts
 git commit -m "feat(ui): 设置页（合伙人 / 分成 / 目标毛利 / 自定义成本项）"
 ```
+
+> **`git add` 的路径必须逐字列出。** 这个仓库里同时可能有人在改别的文件，`git add src` 会把别人写了一半的工作扫进你的提交（已经发生过一次，见本计划的 controller incident 记录）。
+
+> **Task 13 派发前审计（2026-10-03，控制器核对过实际代码）**
+> - `useAppData()`（`src/state/useAppData.ts:21`）确实提供 `{ data, ready, update, replaceAll }`，Step 5 的 `const { data, update } = useAppData()` 可用。
+> - `Field`（`src/ui/components/Field.tsx:1-16`）的 props 是 `{ label, value, onChange, suffix?, inputMode?: 'decimal' | 'numeric' | 'text', error? }`——Step 5 里传 `suffix` 与 `inputMode="numeric"` 都合法。`error` 是 Task 13 之后才被别处用到的东西，本任务不用。
+> - `fenToTextInput` 在 `src/ui/planForm.ts:55`，`todayLocalIso` 在 `src/ui/planForm.ts:47`。
+> - `src/domain/actions.ts` 当前第 1 行是 `import type { AppData, Batch, Dog, DogStatus, LedgerEntry, Money } from './types'`（**没有 `Settings`，也没有 `CostItemDef`**），第 2 行是 `import { newId } from './types'`，必须原样保留。追加本任务的四个动作时，把第 1 行补齐成 Step 3 给的那行。
+> - 追加位置：文件**末尾**（现在是 `setDogQuarantine`，第 195 行之后），既有的 9 个导出函数一字不动。
 
 ---
 
