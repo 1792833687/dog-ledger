@@ -1,7 +1,11 @@
 import { describe, it, expect } from 'vitest'
 import { DEFAULT_DATA } from './types'
-import { setDogStatus, sellDog, markDogDead, addExpense, createBatch } from './actions'
+import {
+  setDogStatus, sellDog, markDogDead, addExpense, createBatch,
+  addInjection, addIncome, addReimbursement, addDistribution,
+} from './actions'
 import { batchSummary, dogIncome, dogOwnCost, batchTotalCost, dogProfitFen } from './costing'
+import { poolBalance, advanceBalance, contributedCapital, distributedTo } from './ledger'
 
 /** 建一个批次，并记一笔运输费 */
 function seed() {
@@ -385,5 +389,204 @@ describe('sellDog', () => {
     // 3 只都在，摊薄成本 = 批次总成本 / 3 = (3*68000) / 3 = 68000
     expect(before).toBe(-68000)
     expect(dogProfitFen(next, dogId)).toBe(120000 - 68000)
+  })
+})
+
+describe('资金类流水', () => {
+  it('注资让池子变多，并记在注入人名下', () => {
+    const next = addInjection(DEFAULT_DATA, 'p1', 500000, '2026-10-03', '')
+    expect(poolBalance(next)).toBe(500000)
+    expect(contributedCapital(next, 'p1')).toBe(500000)
+    expect(contributedCapital(next, 'p2')).toBe(0)
+  })
+
+  it('收入让池子变多', () => {
+    const next = addIncome(DEFAULT_DATA, 120000, '2026-10-05', '')
+    expect(poolBalance(next)).toBe(120000)
+  })
+
+  it('报销让池子变少、垫付余额变少', () => {
+    const withAdvance = addExpense(DEFAULT_DATA, {
+      batchId: null, dogId: null, category: 'purchase',
+      amount: 70000, paidBy: 'p1', date: '2026-10-03', note: '',
+    })
+    const injected = addInjection(withAdvance, 'p1', 500000, '2026-10-03', '')
+    const done = addReimbursement(injected, 'p1', 70000, '2026-10-04')
+    expect(advanceBalance(done, 'p1')).toBe(0)
+    expect(poolBalance(done)).toBe(430000)
+  })
+
+  it('分红让池子变少、已分红变多，且不影响损益', () => {
+    const withMoney = addIncome(DEFAULT_DATA, 200000, '2026-10-05', '')
+    const done = addDistribution(withMoney, 'p1', 50000, '2026-10-06')
+    expect(poolBalance(done)).toBe(150000)
+    expect(distributedTo(done, 'p1')).toBe(50000)
+  })
+
+  it('金额为负时被夹到 0', () => {
+    const next = addIncome(DEFAULT_DATA, -100, '2026-10-05', '')
+    expect(poolBalance(next)).toBe(0)
+  })
+})
+
+describe('资金类流水的流水字段', () => {
+  /** 四种转账类动作里，只有收入不带归属合伙人 */
+  function lastEntry(data: Parameters<typeof poolBalance>[0]) {
+    return data.entries[data.entries.length - 1]
+  }
+
+  it('注资：type injection、category transfer、paidBy 是注入人、payee 为空', () => {
+    const next = addInjection(DEFAULT_DATA, 'p1', 500000, '2026-10-03', '第一笔')
+    const e = lastEntry(next)
+    expect(e.type).toBe('injection')
+    expect(e.category).toBe('transfer')
+    expect(e.paidBy).toBe('p1')
+    expect(e.payee).toBeNull()
+    expect(e.date).toBe('2026-10-03')
+    expect(e.note).toBe('第一笔')
+  })
+
+  it('不挂狗的收入：type income、category sale、batchId / dogId 都是 null', () => {
+    const next = addIncome(DEFAULT_DATA, 120000, '2026-10-05', '卖笼子')
+    const e = lastEntry(next)
+    expect(e.type).toBe('income')
+    expect(e.category).toBe('sale')
+    expect(e.batchId).toBeNull()
+    expect(e.dogId).toBeNull()
+    expect(e.paidBy).toBe('pool')
+    expect(e.payee).toBeNull()
+  })
+
+  it('报销：pid 记在 payee（收款的合伙人），钱是从池子出的', () => {
+    const next = addReimbursement(DEFAULT_DATA, 'p2', 70000, '2026-10-04')
+    const e = lastEntry(next)
+    expect(e.type).toBe('reimbursement')
+    expect(e.category).toBe('transfer')
+    expect(e.payee).toBe('p2')
+    expect(e.paidBy).toBe('pool')
+    expect(e.amount).toBe(70000)
+  })
+
+  it('分红：pid 记在 payee', () => {
+    const next = addDistribution(DEFAULT_DATA, 'p2', 50000, '2026-10-06')
+    const e = lastEntry(next)
+    expect(e.type).toBe('distribution')
+    expect(e.category).toBe('transfer')
+    expect(e.payee).toBe('p2')
+    expect(e.date).toBe('2026-10-06')
+  })
+
+  it('四种动作都不带 batchId / dogId（它们不属于任何一批任何一只狗）', () => {
+    const in1 = addInjection(DEFAULT_DATA, 'p1', 1, '2026-10-03', '')
+    const in2 = addIncome(DEFAULT_DATA, 1, '2026-10-03', '')
+    const in3 = addReimbursement(DEFAULT_DATA, 'p1', 1, '2026-10-03')
+    const in4 = addDistribution(DEFAULT_DATA, 'p1', 1, '2026-10-03')
+    for (const d of [in1, in2, in3, in4]) {
+      expect(lastEntry(d).batchId).toBeNull()
+      expect(lastEntry(d).dogId).toBeNull()
+    }
+  })
+})
+
+describe('资金类流水的金额处理（与 addExpense 同一口径）', () => {
+  it('小数取整到分：1234.6 → 1235', () => {
+    const next = addInjection(DEFAULT_DATA, 'p1', 1234.6, '2026-10-03', '')
+    expect(next.entries[0].amount).toBe(1235)
+  })
+
+  it('负数夹到 0：注资 -1 记成 0，不把池子记成负数', () => {
+    const next = addInjection(DEFAULT_DATA, 'p1', -1, '2026-10-03', '')
+    expect(next.entries[0].amount).toBe(0)
+    expect(poolBalance(next)).toBe(0)
+  })
+
+  it('负数夹到 0：报销 -1 不让垫付余额被倒着加回去', () => {
+    const withAdvance = addExpense(DEFAULT_DATA, {
+      batchId: null, dogId: null, category: 'purchase',
+      amount: 70000, paidBy: 'p1', date: '2026-10-03', note: '',
+    })
+    const done = addReimbursement(withAdvance, 'p1', -1, '2026-10-04')
+    expect(advanceBalance(done, 'p1')).toBe(70000)
+    const paid = addDistribution(withAdvance, 'p1', -1, '2026-10-04')
+    expect(distributedTo(paid, 'p1')).toBe(0)
+  })
+})
+
+describe('资金类流水不修改传入的数据', () => {
+  it('addInjection 不改原对象、不往原数组里塞', () => {
+    const before = DEFAULT_DATA.entries.length
+    addInjection(DEFAULT_DATA, 'p1', 500000, '2026-10-03', '')
+    expect(DEFAULT_DATA.entries).toHaveLength(before)
+    expect(contributedCapital(DEFAULT_DATA, 'p1')).toBe(0)
+  })
+
+  it('addIncome 不改原对象，返回的是新引用', () => {
+    const next = addIncome(DEFAULT_DATA, 120000, '2026-10-05', '')
+    expect(next).not.toBe(DEFAULT_DATA)
+    expect(next.entries).not.toBe(DEFAULT_DATA.entries)
+    expect(DEFAULT_DATA.entries).toHaveLength(0)
+  })
+
+  it('报销与分红也不改原对象', () => {
+    const withAdvance = addExpense(DEFAULT_DATA, {
+      batchId: null, dogId: null, category: 'purchase',
+      amount: 70000, paidBy: 'p1', date: '2026-10-03', note: '',
+    })
+    const snapshot = withAdvance.entries.length
+    addReimbursement(withAdvance, 'p1', 70000, '2026-10-04')
+    addDistribution(withAdvance, 'p1', 10000, '2026-10-04')
+    expect(withAdvance.entries).toHaveLength(snapshot)
+    expect(advanceBalance(withAdvance, 'p1')).toBe(70000)
+    expect(distributedTo(withAdvance, 'p1')).toBe(0)
+  })
+})
+
+describe('资金类流水与池子的口径', () => {
+  it('合伙人垫付的支出不动池子里的钱（只有池子直付才减）', () => {
+    const advanced = addExpense(DEFAULT_DATA, {
+      batchId: null, dogId: null, category: 'purchase',
+      amount: 70000, paidBy: 'p1', date: '2026-10-03', note: '',
+    })
+    expect(poolBalance(advanced)).toBe(0)
+    expect(advanceBalance(advanced, 'p1')).toBe(70000)
+  })
+
+  it('注资不算垫付：把钱打进池子不等于替池子垫了钱', () => {
+    const next = addInjection(DEFAULT_DATA, 'p1', 500000, '2026-10-03', '')
+    expect(advanceBalance(next, 'p1')).toBe(0)
+  })
+
+  it('收入不算垫付、不算注资本金', () => {
+    const next = addIncome(DEFAULT_DATA, 120000, '2026-10-05', '')
+    expect(advanceBalance(next, 'p1')).toBe(0)
+    expect(contributedCapital(next, 'p1')).toBe(0)
+  })
+
+  it('报销只冲掉垫付，不改注资本金', () => {
+    const withAdvance = addExpense(DEFAULT_DATA, {
+      batchId: null, dogId: null, category: 'purchase',
+      amount: 70000, paidBy: 'p1', date: '2026-10-03', note: '',
+    })
+    const injected = addInjection(withAdvance, 'p1', 500000, '2026-10-03', '')
+    const done = addReimbursement(injected, 'p1', 70000, '2026-10-04')
+    expect(contributedCapital(done, 'p1')).toBe(500000)
+  })
+
+  it('分红不减某人的垫付余额（分红不是还钱）', () => {
+    const withAdvance = addExpense(DEFAULT_DATA, {
+      batchId: null, dogId: null, category: 'purchase',
+      amount: 70000, paidBy: 'p1', date: '2026-10-03', note: '',
+    })
+    const injected = addInjection(withAdvance, 'p1', 500000, '2026-10-03', '')
+    const done = addDistribution(injected, 'p1', 50000, '2026-10-06')
+    expect(advanceBalance(done, 'p1')).toBe(70000)
+    expect(poolBalance(done)).toBe(450000)
+  })
+
+  it('一笔分红只算在收款人名下，不给别人记上', () => {
+    const withMoney = addIncome(DEFAULT_DATA, 200000, '2026-10-05', '')
+    const done = addDistribution(withMoney, 'p1', 50000, '2026-10-06')
+    expect(distributedTo(done, 'p1')).toBe(50000)
+    expect(distributedTo(done, 'p2')).toBe(0)
   })
 })

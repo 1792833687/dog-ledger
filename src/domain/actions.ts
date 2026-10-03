@@ -109,3 +109,55 @@ export function sellDog(data: AppData, dogId: string, price: Money, date: string
     entries: [...data.entries, entry],
   }
 }
+
+/**
+ * 四种「钱在池子和人之间转」的流水的共同写法。
+ *
+ * 这些流水**不属于任何一批、任何一只狗**（`batchId` / `dogId` 恒为 null）：注资与分红
+ * 是合伙人之间的钱，报销是还垫付，散收入（卖笼子之类）没有可归的批次。
+ *
+ * `category` 按 `types.ts:129` 的约定：只有 `income` 用 `'sale'`，其余转账类一律 `'transfer'`。
+ */
+function transferEntry(
+  data: AppData,
+  type: 'injection' | 'income' | 'reimbursement' | 'distribution',
+  amount: Money,
+  date: string,
+  note: string,
+  fields: { paidBy?: 'pool' | string; payee?: string | null },
+): AppData {
+  const entry: LedgerEntry = {
+    id: newId(),
+    date,
+    type,
+    category: type === 'income' ? 'sale' : 'transfer',
+    // 与 addExpense / sellDog 同一口径：金额恒为正整数，小数取整到分、负数夹到 0。
+    amount: Math.max(0, Math.round(amount)),
+    paidBy: fields.paidBy ?? 'pool',
+    payee: fields.payee ?? null,
+    batchId: null,
+    dogId: null,
+    note,
+  }
+  return { ...data, entries: [...data.entries, entry] }
+}
+
+/** 合伙人往池子里打钱。注资本金算在这个人名下（`contributedCapital`），不算垫付。 */
+export function addInjection(data: AppData, partnerId: string, amount: Money, date: string, note: string): AppData {
+  return transferEntry(data, 'injection', amount, date, note, { paidBy: partnerId })
+}
+
+/** 不挂到具体某只狗的收入（如卖笼子、退款回收）。钱进池子，不归任何人之名。 */
+export function addIncome(data: AppData, amount: Money, date: string, note: string): AppData {
+  return transferEntry(data, 'income', amount, date, note, {})
+}
+
+/** 池子出钱报销某人的垫付。钱给谁记在 `payee`（`advanceBalance` 靠它冲账）。 */
+export function addReimbursement(data: AppData, partnerId: string, amount: Money, date: string): AppData {
+  return transferEntry(data, 'reimbursement', amount, date, '', { payee: partnerId })
+}
+
+/** 池子出钱给某合伙人分红。钱给谁记在 `payee`（`distributedTo` 靠它统计）。 */
+export function addDistribution(data: AppData, partnerId: string, amount: Money, date: string): AppData {
+  return transferEntry(data, 'distribution', amount, date, '', { payee: partnerId })
+}
