@@ -3807,9 +3807,11 @@ git commit -m "feat(ui): 设置页（合伙人 / 分成 / 目标毛利 / 自定�
 
 **顺序**：15 与 16 是纯函数（`domain/`，有单测）；17–19 是界面接线。19 依赖 17 的页面存在，18 依赖 16。
 
-> **⚠️ 实施顺序变更（2026-10-03，用户拍板）**：用户决定**先把「检」页面这一组做完**，再回头做 Task 12 / 13 / 20 / 14。所以实际执行顺序是 **15 → 17 → 19 → 16 → 18 → 12 → 13 → 20 → 14**，本文档里的任务编号不变（编号是身份，不是顺序）。
+> **⚠️ 实施顺序变更（2026-10-03，用户拍板）**：用户决定**先把「检」页面这一组做完**，再回头做 Task 12 / 13 / 20 / 14。所以实际执行顺序是 **15 → 17 → 13 → 19 → 16 → 18 → 12 → 20 → 14**，本文档里的任务编号不变（编号是身份，不是顺序）。
 >
 > 理由（用户原话的意图）：不管最后走宠物店、犬市还是别的渠道，**检疫证明都是每一单出售的法定前置**，所以检疫台账是「所有路线都需要的地基」，先把地基打完再谈别的。
+>
+> **顺序修正（2026-10-03，控制器自查发现）**：初版顺序把 Task 19 排在 Task 13 前面，但 **Task 19 要往 `src/ui/pages/SettingsPanel.tsx` 里加两个输入框，而这个文件是 Task 13 的产物**——按初版顺序 Task 19 根本写不出来。现已把 Task 13 提到 Task 19 之前。Task 18 依赖的批次详情页来自早已完成的 Task 10，不受影响。
 >
 > 用户同时裁定：**30 天隔离与资金占用成本先不进模型**（《狂犬病防治技术规范》5.3 的「引进后应至少隔离观察 30 天」是否适用于纯转卖中间商，官方无明确解释，须先向当地动物卫生监督机构核实）。核实结果回来之前，**不许**在 `PlanInput` 或决策台里凭空加一个「压货天数」参数。
 
@@ -4174,7 +4176,7 @@ export function compareChannels(data: AppData, batchId: string, inputs: ChannelI
 **Files:**
 - Create: `src/domain/stats.ts`
 - Test: `src/domain/stats.test.ts`
-- Modify: `src/ui/pages/ReportPage.tsx`（在 Task 12 与 Task 14 的产出之后追加一节）
+- Modify: `src/ui/pages/ReportPage.tsx`（在 Task 12 的产出之后追加一节；Task 14 之后还会在这个文件底部再加备份面板，两次追加互不冲突）
 
 **Interfaces:**
 - Consumes: `AppData`、`LedgerEntry`、`Money`（`src/domain/types.ts`）；`dogsOfBatch`（`src/domain/costing.ts`）
