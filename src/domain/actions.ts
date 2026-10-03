@@ -59,7 +59,20 @@ export function setDogStatus(data: AppData, dogId: string, status: DogStatus): A
   }
 }
 
+/**
+ * 把一只在库的狗标成死亡。
+ *
+ * 守卫（实机走查抓到的账目污染）：只有 `in_stock` 的狗能被标死亡。
+ * 一只**已售**的狗如果被标成 death，那笔 `income/sale` 流水会留在账上一动不动，
+ * 而它的购置成本从此计入「死亡损耗」—— 批次盈亏直接算错（见 `costing.ts:38` 的 `deadLoss`）。
+ *
+ * 所以这里对已售 / 已死 / 已退回的狗一律原样返回 `data`（同一引用），
+ * 界面层也不会给这些状态渲染「死亡」按钮。要纠错（比如死亡记错了），
+ * 走 `setDogStatus(data, dogId, 'in_stock')` —— 那个函数故意不设守卫。
+ */
 export function markDogDead(data: AppData, dogId: string): AppData {
+  const dog = data.dogs.find(d => d.id === dogId)
+  if (!dog || dog.status !== 'in_stock') return data
   return setDogStatus(data, dogId, 'dead')
 }
 

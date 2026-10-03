@@ -44,6 +44,10 @@ export function DogsPage() {
   const [expenseCategory, setExpenseCategory] = useState('medical')
   const [expenseNote, setExpenseNote] = useState('')
   const [newBatchName, setNewBatchName] = useState('')
+  const [refundingDogId, setRefundingDogId] = useState<string | null>(null)
+  const [refundAmount, setRefundAmount] = useState('')
+  const [refundKeepSold, setRefundKeepSold] = useState(false)
+  const [refundNote, setRefundNote] = useState('')
 
   // 解析不了（不是空、但不是数字）时必须给中文提示并且不写账，不能静默当 0：
   // 用户把「600元」打成「６00」而系统按 0 记账，那一批的成本从此就是错的，且没人会发现。
@@ -51,6 +55,27 @@ export function DogsPage() {
   const priceInvalid = priceInput.trim() !== '' && priceParsed === null
   const expenseParsed = parseMoney(expenseAmount)
   const expenseInvalid = expenseAmount.trim() !== '' && expenseParsed === null
+  const refundParsed = parseMoney(refundAmount)
+  const refundInvalid = refundAmount.trim() !== '' && refundParsed === null
+  const refundDog = refundingDogId === null ? null : data.dogs.find(d => d.id === refundingDogId) ?? null
+
+  /**
+   * 记退款支出。设计文档 §3.4 与 §6 要求 `returned` 必须伴随一笔
+   * 「售后退款」支出，否则账上会留着一笔根本没赚到的利润。
+   * 两种情况共用这一个处理器：狗要不要回来由调用方先改状态。
+   */
+  function confirmRefund(dogId: string, keepSold: boolean): void {
+    const amount = parseMoney(refundAmount)
+    if (amount === null) return
+    const dog = data.dogs.find(d => d.id === dogId)
+    if (!dog) return
+    if (!keepSold) void update(d => setDogStatus(d, dogId, 'returned'))
+    void update(d => addExpense(d, {
+      batchId: dog.batchId, dogId, category: 'aftercare_refund', amount,
+      paidBy: 'pool', date: todayIso(), note: refundNote.trim() || (keepSold ? '钱退了，狗没回来' : '客户退狗'),
+    }))
+    setRefundingDogId(null)
+  }
 
   if (!openBatchId) {
     return (
@@ -135,6 +160,16 @@ export function DogsPage() {
   const summary = batchSummary(data, batch.id)
   const dogs = dogsOfBatch(data, batch.id)
 
+  // 已经记过退款的狗 id。用来把「退狗 / 钱退了狗没回来」两个按钮收掉：
+  // 这两个动作都是「加一笔支出」，重复点会重复扣钱，而它们不像卖出那样
+  // 能被状态挡住（钱退了狗没回来时状态本来就一直是 sold）。
+  const refundedDogIds = new Set(
+    data.entries
+      .filter(e => e.type === 'expense' && e.category === 'aftercare_refund')
+      .map(e => e.dogId)
+      .filter((id): id is string => id !== null),
+  )
+
   return (
     <div className="px-4 pb-6 pt-6">
       <button type="button" className="text-sm text-gray-500" onClick={() => setOpenBatchId(null)}>
@@ -187,8 +222,8 @@ export function DogsPage() {
                   </>
                 )}
               </div>
-              <div className="mt-2 flex gap-2 text-xs">
-                {d.status !== 'sold' && d.status !== 'dead' && (
+              <div className="mt-2 flex flex-wrap gap-2 text-xs">
+                {d.status === 'in_stock' && (
                   <button
                     type="button"
                     className="rounded-md bg-emerald-600 px-3 py-1 text-white"
@@ -197,7 +232,9 @@ export function DogsPage() {
                     卖出
                   </button>
                 )}
-                {d.status !== 'dead' && (
+                {/* 只有还在库的狗能标死亡。已售的狗标死亡会把 sold 覆盖成 dead，
+                    而收入流水留在账上，批次盈亏从此是错的（markDogDead 里也有守卫兜底）。 */}
+                {d.status === 'in_stock' && (
                   <button
                     type="button"
                     className="rounded-md bg-gray-100 px-3 py-1 text-gray-600"
@@ -206,13 +243,49 @@ export function DogsPage() {
                     死亡
                   </button>
                 )}
-                {d.status === 'sold' && (
+                {d.status === 'sold' && !refundedDogIds.has(d.id) && (
                   <button
                     type="button"
                     className="rounded-md bg-gray-100 px-3 py-1 text-gray-600"
-                    onClick={() => void update(x => setDogStatus(x, d.id, 'returned'))}
+                    onClick={() => {
+                      setRefundingDogId(d.id); setRefundAmount(''); setRefundNote(''); setRefundKeepSold(false)
+                    }}
                   >
                     退狗
+                  </button>
+                )}
+                {d.status === 'sold' && !refundedDogIds.has(d.id) && (
+                  <button
+                    type="button"
+                    className="rounded-md bg-gray-100 px-3 py-1 text-gray-600"
+                    onClick={() => {
+                      setRefundingDogId(d.id); setRefundAmount(''); setRefundNote(''); setRefundKeepSold(true)
+                    }}
+                  >
+                    钱退了，狗没回来
+                  </button>
+                )}
+                {d.status === 'sold' && refundedDogIds.has(d.id) && (
+                  <span className="self-center text-gray-400">已记退款</span>
+                )}
+                {/* 纠错入口。死 / 退回都只是记一笔状态，记错了必须能改回来——
+                    否则点错一次这只狗就永远挂在错的状态上，账也跟着错。 */}
+                {d.status === 'dead' && (
+                  <button
+                    type="button"
+                    className="rounded-md bg-amber-100 px-3 py-1 text-amber-700"
+                    onClick={() => void update(x => setDogStatus(x, d.id, 'in_stock'))}
+                  >
+                    记错了，改回在库
+                  </button>
+                )}
+                {d.status === 'returned' && (
+                  <button
+                    type="button"
+                    className="rounded-md bg-amber-100 px-3 py-1 text-amber-700"
+                    onClick={() => void update(x => setDogStatus(x, d.id, 'in_stock'))}
+                  >
+                    狗又要回来了
                   </button>
                 )}
               </div>
@@ -341,6 +414,56 @@ export function DogsPage() {
           }}
         >
           记下
+        </button>
+      </Modal>
+
+      {/* 退狗 / 退款。设计文档要求 returned = 回到在库 + 医疗成本不冲销 + 另记一笔「售后退款」支出；
+          若钱退了但狗没要回来，则状态保持 sold、只记那笔支出。两种情况共用这个弹窗。 */}
+      <Modal
+        open={refundDog !== null}
+        title={refundKeepSold ? '钱退了，狗没回来' : '退狗：退给客户多少钱？'}
+        onClose={() => setRefundingDogId(null)}
+      >
+        {refundDog !== null && (
+          <p className="mb-2 text-xs text-gray-500">
+            {refundDog.code}
+            {refundKeepSold
+              ? ' · 狗不回来了，状态仍记「已售」，只把退款记成支出'
+              : ' · 狗回到在库，之前花掉的医疗成本不冲销'}
+          </p>
+        )}
+
+        <input
+          autoFocus
+          className="w-full rounded-lg bg-gray-100 px-3 py-2 text-lg outline-none"
+          inputMode="decimal"
+          placeholder="退回给客户的钱（元）"
+          value={refundAmount}
+          onChange={e => setRefundAmount(e.target.value)}
+        />
+        {refundInvalid && (
+          <p className="mt-1 text-xs text-red-500">这不像一个数字，请重新填（只填元的数，如 1200）</p>
+        )}
+
+        {refundKeepSold && (
+          <input
+            className="mt-2 w-full rounded-lg bg-gray-100 px-3 py-2 text-sm outline-none"
+            placeholder="备注（可留空）"
+            value={refundNote}
+            onChange={e => setRefundNote(e.target.value)}
+          />
+        )}
+
+        <button
+          type="button"
+          className="mt-3 w-full rounded-xl bg-gray-900 py-3 text-sm font-semibold text-white disabled:opacity-40"
+          disabled={refundParsed === null || refundingDogId === null}
+          onClick={() => {
+            if (refundingDogId === null) return
+            confirmRefund(refundingDogId, refundKeepSold)
+          }}
+        >
+          {refundKeepSold ? '记下退款' : '确认退狗并记下退款'}
         </button>
       </Modal>
     </div>

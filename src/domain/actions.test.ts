@@ -155,6 +155,125 @@ describe('setDogStatus / markDogDead', () => {
   })
 })
 
+describe('markDogDead 的守卫（已售 / 已死的狗不许再标死亡）', () => {
+  it('对已售的狗调 markDogDead：原样返回同一引用，状态仍是 sold', () => {
+    // 这是实机走查抓到的账目污染：把 sold 覆盖成 dead 之后，
+    // 那笔 income/sale 流水留在账上一动不动，狗的购置成本却进了「死亡损耗」，
+    // 批次盈亏直接算错。而且 dead 的卡上一个按钮都不剩，点错了改不回来。
+    const data = sellSeed()
+    const dogId = data.dogs[0].id
+    const sold = sellDog(data, dogId, 120000, '2026-10-05')
+    const next = markDogDead(sold, dogId)
+    expect(next).toBe(sold)
+    expect(next.dogs.find(d => d.id === dogId)!.status).toBe('sold')
+  })
+
+  it('对已死的狗再标一次死亡：原样返回，不重复改', () => {
+    const data = sellSeed()
+    const dogId = data.dogs[0].id
+    const dead = markDogDead(data, dogId)
+    expect(markDogDead(dead, dogId)).toBe(dead)
+  })
+
+  it('对退回的狗也不标死亡', () => {
+    const data = sellSeed()
+    const dogId = data.dogs[0].id
+    const returned = setDogStatus(data, dogId, 'returned')
+    expect(markDogDead(returned, dogId)).toBe(returned)
+  })
+
+  it('对不存在的狗原样返回', () => {
+    const data = sellSeed()
+    expect(markDogDead(data, '没有这只')).toBe(data)
+  })
+
+  it('但在库的狗仍然能标死亡（守卫没有把正常路径一起堵掉）', () => {
+    const data = sellSeed()
+    const dogId = data.dogs[0].id
+    const next = markDogDead(data, dogId)
+    expect(next).not.toBe(data)
+    expect(next.dogs.find(d => d.id === dogId)!.status).toBe('dead')
+  })
+})
+
+describe('setDogStatus 不设守卫（这是纠错入口能成立的前提）', () => {
+  it('setDogStatus 本身不设守卫：纠错入口要能把 dead / returned 改回在库', () => {
+    const data = sellSeed()
+    const dogId = data.dogs[0].id
+    const dead = markDogDead(data, dogId)
+    const back = setDogStatus(dead, dogId, 'in_stock')
+    expect(back.dogs.find(d => d.id === dogId)!.status).toBe('in_stock')
+    const deadAgain = markDogDead(back, dogId)
+    expect(deadAgain.dogs.find(d => d.id === dogId)!.status).toBe('dead')
+  })
+})
+
+describe('退狗退款（aftercare_refund）', () => {
+  it('记一笔 aftercare_refund 支出并挂在这只狗上', () => {
+    const data = sellSeed()
+    const dogId = data.dogs[0].id
+    const sold = sellDog(data, dogId, 120000, '2026-10-05')
+    const next = addExpense(sold, {
+      batchId: sold.batches[0].id, dogId, category: 'aftercare_refund',
+      amount: 120000, paidBy: 'pool', date: '2026-10-06', note: '',
+    })
+    const entry = next.entries[next.entries.length - 1]
+    expect(entry.type).toBe('expense')
+    expect(entry.category).toBe('aftercare_refund')
+    expect(entry.dogId).toBe(dogId)
+  })
+
+  it('退款支出计入批次总成本，从而把虚增的利润压回去', () => {
+    // 退狗只改状态不记退款，账上会留着一笔根本没赚到的利润 —— 这就是返工的原因。
+    const data = sellSeed()
+    const batchId = data.batches[0].id
+    const dogId = data.dogs[0].id
+    const sold = sellDog(data, dogId, 120000, '2026-10-05')
+    const beforeRefund = batchSummary(sold, batchId)
+    expect(beforeRefund.netProfitFen).toBe(beforeRefund.income - beforeRefund.totalCost)
+
+    const refunded = addExpense(sold, {
+      batchId, dogId, category: 'aftercare_refund',
+      amount: 120000, paidBy: 'pool', date: '2026-10-06', note: '客户退狗',
+    })
+    for (const summary of [beforeRefund, batchSummary(refunded, batchId)]) {
+      expect(summary.netProfitFen).toBe(summary.income - summary.totalCost)
+    }
+    expect(batchSummary(refunded, batchId).totalCost).toBe(batchTotalCost(refunded, batchId))
+    expect(batchTotalCost(refunded, batchId)).toBe(beforeRefund.totalCost + 120000)
+  })
+
+  it('退回的狗重新计入在库，且不冲销已发生的医疗成本', () => {
+    const data = sellSeed()
+    const batchId = data.batches[0].id
+    const dogId = data.dogs[0].id
+    const sold = sellDog(data, dogId, 120000, '2026-10-05')
+    const mine = dogOwnCost(sold, dogId)
+    const refunded = addExpense(sold, {
+      batchId, dogId, category: 'aftercare_refund',
+      amount: 120000, paidBy: 'pool', date: '2026-10-06', note: '',
+    })
+    const returned = setDogStatus(refunded, dogId, 'returned')
+    // inStockCount 把 returned 也算进去（costing.ts:29 的注释：它又站在笼子里了，
+    // 还得再卖一次，所以进分母）：另外 2 只还在库 + 退回来的这 1 只 = 3。
+    expect(batchSummary(returned, batchId).inStock).toBe(3)
+    // 医疗成本没有被冲销：它还在那只狗的直接成本里，再加上退款。
+    expect(dogOwnCost(returned, dogId)).toBe(mine + 120000)
+  })
+
+  it('钱退了但狗没要回来：状态保持 sold，只多一笔退款支出', () => {
+    const data = sellSeed()
+    const dogId = data.dogs[0].id
+    const sold = sellDog(data, dogId, 120000, '2026-10-05')
+    const refunded = addExpense(sold, {
+      batchId: sold.batches[0].id, dogId, category: 'aftercare_refund',
+      amount: 120000, paidBy: 'pool', date: '2026-10-06', note: '',
+    })
+    expect(refunded.dogs.find(d => d.id === dogId)!.status).toBe('sold')
+    expect(refunded.entries).toHaveLength(sold.entries.length + 1)
+  })
+})
+
 describe('sellDog', () => {
   it('把狗标为已售，并写入一笔收入', () => {
     const data = sellSeed()
