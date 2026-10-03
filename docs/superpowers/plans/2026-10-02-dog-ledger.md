@@ -20,6 +20,7 @@
 - **渠道与检疫字段必须真正用上（修订二）**：`Batch.plannedChannel` 与 `Dog` 的 6 个检疫字段（`rabiesVaccinatedOn` / `antibodyTestedOn` / `antibodyReportNo` / `quarantineCertNo` / `quarantineCertIssuedOn` / `quarantineCertValidUntil`）都是**必填**。任何创建 `Batch` 的地方都要给 `plannedChannel` 赋值（默认 `'undecided'`）；任何创建 `Dog` 的地方都要带上这 6 个字段（未接种/未检测/无证明用 `null`，编号用 `''`）。**`tsc` 会因此报错——这是故意的，不要用 `as any` 或 `@ts-expect-error` 绕开。**
 - **检疫证明是出售的硬门槛**：`isSellable()` 只在 `certified` 阶段返回 `true`。依据见 `docs/compliance/2026-10-02-犬只交易合规要点-法规篇.md`——一证多用（数量超出证载明部分、种类不符、使用转让的证明）按「未经检疫」处理，落进货值 15~30 倍罚款那一档，负责人 5 年禁业。
 - **`domain/` 里任何函数都不得调用 `new Date()`**：需要"今天"时一律由调用方把 `today: string`（`'YYYY-MM-DD'`）作为参数传进来。这让检疫阶段推导可测试，也避免"过期"的判定在不同时区下静默漂移。
+- **UI 层要"今天"，用 `todayLocalIso(new Date())`（`src/ui/planForm.ts`），绝不要 `new Date().toISOString().slice(0, 10)`。** 后者是 UTC，东八区晚上 8 点后返回的是昨天——"今天卖的狗"会被记在昨天，检疫的"有效期到哪天"也会跟着错一天。页面里统一 `import { todayLocalIso } from '../planForm'`。
 - 数据模型以 `docs/superpowers/specs/2026-10-02-dog-trading-ledger-design.md` 为准。
 - 单测命令：`npx vitest run`；单文件：`npx vitest run <文件路径>`。
 - 测试环境为 `node`（领域层是纯函数，不需要 jsdom）。
@@ -2075,7 +2076,7 @@ export function CalculatePage() {
 
   function handleCreateBatch() {
     const name = `收狗 ${input.n} 只`
-    void update(d => createBatchFromPlan(d, input, name, new Date().toISOString().slice(0, 10)))
+    void update(d => createBatchFromPlan(d, input, name, todayLocalIso(new Date())))
     setCreated(name)
   }
 
@@ -2203,6 +2204,13 @@ git commit -m "feat(ui): 决策台页面"
 ---
 
 ### Task 10: 「狗」页面（批次台账）
+
+> **【控制器在派发前核对过一遍，下面两处已修，另有几条务必遵守】**
+> 1. `createBatch` 里那个 `Batch` 字面量**必须带 `plannedChannel: 'undecided'`**（`types.ts:94` 是必填，修订二加的）。原片段漏了，照抄会在 `tsc -b` 报错——**不要用 `as any` 绕过**。
+> 2. **不要用 `new Date().toISOString().slice(0, 10)` 取今天**：那是 UTC，东八区晚上 8 点后返回的是昨天。用 Task 9 已经写好并测过的 `todayLocalIso(new Date())`（`src/ui/planForm.ts:47`，从页面里 `import { todayLocalIso } from '../planForm'`）。
+> 3. 补录狗时新 `Dog` 的 6 个检疫字段填 `null`/`''`（照片段即可）；**不许顺手填今天**——一只还没打疫苗的狗被记成"今天已接种"会让检疫页给出错误的可卖判断。
+> 4. `paidBy: 'pool'` 是故意的：批次页只记池子直付，合伙人垫付去「钱」页面（Task 11）。别在这里加垫付下拉。
+> 5. 今天这个仓库的测试文件必须显式 `import { describe, it, expect } from 'vitest'`，否则 `tsc -b` 报 TS2593 而 vitest 仍是绿的。
 
 **Files:**
 - Modify: `src/ui/pages/DogsPage.tsx`（整体替换）
@@ -2343,7 +2351,12 @@ import type { AppData, Batch, DogStatus, LedgerEntry, Money } from './types'
 import { newId } from './types'
 
 export function createBatch(data: AppData, name: string, date: string): AppData {
-  const batch: Batch = { id: newId(), name, date, source: '', note: '', status: 'active' }
+  // plannedChannel 是必填字段（修订二）。这里建出来的批次还没定去向，先记 'undecided'；
+  // 真正的去向在「算」页面一键建批次时给（Task 18），或之后在批次详情里改。
+  const batch: Batch = {
+    id: newId(), name, date, source: '', note: '', status: 'active',
+    plannedChannel: 'undecided',
+  }
   return { ...data, batches: [...data.batches, batch] }
 }
 
@@ -2461,6 +2474,7 @@ import { sellDog, markDogDead, setDogStatus, createBatch, addExpense } from '../
 import { formatMoney, parseMoney } from '../../domain/money'
 import { Modal } from '../components/Modal'
 import { newId } from '../../domain/types'
+import { todayLocalIso } from '../planForm'
 
 const STATUS_LABEL: Record<string, string> = {
   in_stock: '在库', sold: '已售', dead: '死亡', returned: '退回',
@@ -2477,7 +2491,8 @@ export function DogsPage() {
   const [expenseNote, setExpenseNote] = useState('')
   const [newBatchName, setNewBatchName] = useState('')
 
-  const today = new Date().toISOString().slice(0, 10)
+  // 本机时区的今天。不要用 toISOString()——那是 UTC，东八区晚上 8 点后返回昨天。
+  const today = todayLocalIso(new Date())
 
   if (!openBatchId) {
     return (
@@ -2886,6 +2901,7 @@ import { poolBalance, advanceBalance } from '../../domain/ledger'
 import { addExpense, addInjection, addIncome, addReimbursement, addDistribution } from '../../domain/actions'
 import { formatMoney, parseMoney } from '../../domain/money'
 import { Modal } from '../components/Modal'
+import { todayLocalIso } from '../planForm'
 
 const CATEGORY_LABEL: Record<string, string> = {
   purchase: '收购价', transport: '运输+笼具', medical: '疫苗医疗',
@@ -2905,7 +2921,8 @@ export function MoneyPage() {
   const [partnerId, setPartnerId] = useState(data.settings.partners[0]?.id ?? '')
   const [paidBy, setPaidBy] = useState<'pool' | string>('pool')
 
-  const today = new Date().toISOString().slice(0, 10)
+  // 本机时区的今天（不要用 toISOString()，那是 UTC，东八区晚上会差一天）
+  const today = todayLocalIso(new Date())
   const pool = poolBalance(data)
   const recent = [...data.entries].reverse().slice(0, 60)
 
@@ -3257,6 +3274,7 @@ import { useAppData } from '../../state/useAppData'
 import { settle } from '../../domain/settlement'
 import { batchSummary } from '../../domain/costing'
 import { formatMoney } from '../../domain/money'
+import { todayLocalIso } from '../planForm'
 import { buildReceiptRows, receiptToBlob } from '../receipt'
 
 export function ReportPage() {
@@ -3265,7 +3283,8 @@ export function ReportPage() {
   const [message, setMessage] = useState('')
 
   const s = settle(data)
-  const today = new Date().toISOString().slice(0, 10)
+  // 本机时区的今天（不要用 toISOString()，那是 UTC，东八区晚上会差一天）
+  const today = todayLocalIso(new Date())
 
   const ranking = useMemo(
     () => data.batches
