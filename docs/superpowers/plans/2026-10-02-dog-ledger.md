@@ -4237,6 +4237,11 @@ export function compareChannels(data: AppData, batchId: string, inputs: ChannelI
 
 **测试要求**（`src/domain/stats.test.ts`，**新建文件，必须显式 `import { describe, it, expect } from 'vitest'`**）：至少覆盖 —— 两类支出各自汇总正确且按金额降序；只有收入没有支出时 `share` 全为 0 且不出 NaN；自定义成本项的名字能被解析出来、被删掉的成本项回落成「其他」；`mortalityTrend` 按日期升序且 `rate` 数值正确（含 `total === 0` 的分支）；空数据返回 `[]`；函数不修改入参。
 
+> **Task 20 派发前审计（2026-10-03，控制器核对了实际代码）**
+> - `LedgerEntry.category` 是**自由字符串**（`addExpense` 的入参就是 `category: string`，`src/domain/actions.ts:26-36`），所以行为 2 的「解析不到回落 `其他`」不是防御性代码，是**真的会走到**：支出里还有 `aftercare_refund`（退狗退款）这类由动作层直接写死的 `category`。别假设 `category` 一定是某个成本项 id。
+> - **`mortalityTrend` 的分母必须和 Task 12 的死亡率分母是同一个数。** Task 12 的排行块用 `summary.sold + summary.dead + summary.inStock`，而你这里的 `total` 是「该批次全部狗数含在库/已售/死亡/退回」——两者**应当恒等**（`src/domain/costing.ts:27-30` 的 `inStockCount` 已含 `returned`，所以 `sold + dead + inStock` 就是全部狗）。加一条测试钉住这件事：一批 10 只（4 售出 / 2 死亡 / 2 在库 / 2 退回）时 `total === 10` 且 `rate === 0.2`。**如果哪天这两页给出不同的死亡率，用户会不知道该信哪个。**
+> - 「报」页里 Task 12 已有一节叫「批次盈亏排行」（每批 `共 N 只 · 死亡 M 只 · 死亡率 X%`），你要加的第二节也叫「死亡率」。**两节不要重复列同一件事**：先 read `src/ui/pages/ReportPage.tsx` 看排行块现在显示了什么，然后让新的一节承担**只有它才有**的信息（趋势视角：按日期排开、能看出来「最近的批次是不是死得更多」）。如果你认为两节应当合并，**先在报告里说明并停下**，不要自己删掉 Task 12 已经做过并验收过的 UI。
+
 **Steps:**
 - [ ] **Step 1**：写 `src/domain/stats.test.ts`（TDD，先跑一次看它失败）。
 - [ ] **Step 2**：实现 `src/domain/stats.ts`，让测试通过。
