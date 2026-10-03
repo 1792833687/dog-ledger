@@ -4130,8 +4130,14 @@ export function compareChannels(data: AppData, batchId: string, inputs: ChannelI
 
 **Files:**
 - Modify: `src/ui/pages/CalculatePage.tsx`（加渠道对照区块）
-- Modify: 批次详情页（显示并允许修改 `plannedChannel`）
-- Modify: 「一键建批次」的调用处（把选中的渠道写进 `plannedChannel`）
+- Modify: `src/ui/pages/DogsPage.tsx`（批次详情：显示并允许修改 `plannedChannel`）
+- Modify: 批次详情用到的纯函数模块（若你把「渠道 id → 中文名」的映射放在 `src/ui/` 的纯函数文件里，一并列出；否则就在 `DogsPage.tsx` 里用一个局部常量，不要为它新建文件）
+
+> **Task 18 派发前审计（2026-10-03，控制器核对了实际代码）**——四处计划书与实际不符，动手时以实际代码为准：
+> 1. **本仓没有单独的「批次详情页」**。`src/ui/pages/` 下只有 `CalculatePage.tsx` / `DogsPage.tsx` / `MoneyPage.tsx` / `QuarantinePage.tsx` / `ReportPage.tsx`；批次列表与批次详情是 `src/ui/pages/DogsPage.tsx`（475 行）同一个文件里的两个视图（它有内部状态在列表与详情之间切换，`DogsPage.tsx:145` 附近有「批次被删掉时退回列表」的处理）。所以「批次详情页」= `src/ui/pages/DogsPage.tsx`。
+> 2. **`plannedChannel` 已经在批次详情里显示了，但显示的是英文 id**：`src/ui/pages/DogsPage.tsx:171` 是 `{batch.date} · 去向：{batch.plannedChannel === 'undecided' ? '未定' : batch.plannedChannel}`——用户会看到 `去向：pet_shop`。**这是现存缺陷，本任务必须顺手修掉**：改走 `SALES_CHANNELS` 查中文名（`undecided` 仍显示「未定」），并把它做成可改的下拉（本任务行为 7）。
+> 3. **行为 5 里那个临时 `AppData` 的字面量字段名错了**：`AppData` 的形状是 `{ version: 1, settings: Settings, batches: Batch[], dogs: Dog[], entries: LedgerEntry[] }`（`src/domain/types.ts`），**没有 `ledger` 字段**，要写 `entries: []`；而且 `version` 与 `settings` 也是必填，构造临时对象时别漏（`settings` 直接用 `data.settings`）。
+> 4. 「一键建批次」的调用处就在 `src/ui/pages/CalculatePage.tsx` 里（`handleCreateBatch`），不是第三个文件。`createBatchFromPlan` 的签名是 `createBatchFromPlan(data: AppData, input: PlanInput, batchName: string, date: string, plannedChannel?: ChannelId): AppData`（`src/domain/planning.ts:83` 起，省略时用 `'undecided'`）。
 
 **Consumes:** `compareChannels` / `ChannelInput` / `ChannelBreakdown`（`src/domain/channels.ts`，Task 16）；`batchPerDogCostFen` / `aliveCount`（`src/domain/costing.ts`）；`SALES_CHANNELS` / `ChannelId`（types.ts）；`formatMoney` / `fenToYuan` / `parseMoney`（`src/domain/money.ts`）。
 
@@ -4155,9 +4161,10 @@ export function compareChannels(data: AppData, batchId: string, inputs: ChannelI
 - [ ] **Step 4**：`npm run dev` 手动验证：填一个批次 → 展开渠道对照 → 「宠物店」填单价 900、每只成本 0、固定成本 0 → 保本单价应等于决策台的每只成本；「犬市」填固定成本 400、单价 900 → 保本单价变高、可能标红 → 存为批次后进批次详情 → 计划去向是选中的那条，能改。
 - [ ] **Step 5**：提交：
   ```bash
-  git add src
+  git add src/ui/pages/CalculatePage.tsx src/ui/pages/DogsPage.tsx
   git commit -m "feat(ui): 渠道对照与批次计划去向"
   ```
+  （若确实新建了 `src/ui/` 下的纯函数模块，把它加进 `git add` 的显式路径列表。**不许写 `git add src`**——这个仓里同时可能有人在改别的文件，已经因此误提交过一次。）
 
 ---
 
@@ -4196,9 +4203,10 @@ export function compareChannels(data: AppData, batchId: string, inputs: ChannelI
 - [ ] **Step 5**：`npm run dev` 手动验证：把等待天数改成 0 → 回「检」页面，刚接种的狗应立刻变成「可以送检」。
 - [ ] **Step 6**：提交：
   ```bash
-  git add src
+  git add src/domain/settlement.ts src/domain/settlement.test.ts src/ui/pages/SettingsPanel.tsx
   git commit -m "feat(ui): 设置面板补检疫天数并校验"
   ```
+  （**不许写 `git add src`**——这个仓里同时可能有人在改别的文件。）
 
 ---
 
