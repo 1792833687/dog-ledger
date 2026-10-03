@@ -1,0 +1,95 @@
+import { describe, it, expect } from 'vitest'
+import type { AppData, LedgerEntry, Settings } from './types'
+import { DEFAULT_DATA, DEFAULT_SETTINGS } from './types'
+import { settle, validateSettings } from './settlement'
+
+function withEntries(entries: Partial<LedgerEntry>[]): AppData {
+  const full = entries.map((e, i) => ({
+    id: `e${i}`, date: '2026-10-03', type: 'expense', category: 'purchase',
+    amount: 0, paidBy: 'pool', payee: null, batchId: null, dogId: null, note: '',
+    ...e,
+  })) as LedgerEntry[]
+  return { ...DEFAULT_DATA, entries: full }
+}
+
+describe('settle', () => {
+  it('净利 = 总收入 − 总支出；垫付与分红不计入损益', () => {
+    const data = withEntries([
+      { type: 'injection', amount: 1000000, paidBy: 'p1' },
+      { type: 'expense', amount: 584000, paidBy: 'p1' },
+      { type: 'income', amount: 720000 },
+      { type: 'reimbursement', amount: 100000, payee: 'p1' },
+      { type: 'distribution', amount: 50000, payee: 'p2' },
+    ])
+    const s = settle(data)
+    expect(s.totalIncome).toBe(720000)
+    expect(s.totalExpense).toBe(584000)
+    expect(s.netProfit).toBe(136000)
+  })
+
+  it('两人各 50% 时应分未分 = 净利 × 0.5 − 已分红', () => {
+    const data = withEntries([
+      { type: 'expense', amount: 100000, paidBy: 'p1' },
+      { type: 'income', amount: 300000 },
+      { type: 'distribution', amount: 20000, payee: 'p2' },
+    ])
+    const s = settle(data)
+    const p1 = s.partners.find(p => p.id === 'p1')!
+    const p2 = s.partners.find(p => p.id === 'p2')!
+    expect(p1.claimable).toBe(100000)   // 200000×0.5 − 0
+    expect(p2.claimable).toBe(80000)    // 200000×0.5 − 20000
+  })
+
+  it('垫付余额按人分别统计', () => {
+    const data = withEntries([
+      { type: 'expense', amount: 70000, paidBy: 'p1' },
+      { type: 'expense', amount: 40000, paidBy: 'p2' },
+      { type: 'reimbursement', amount: 40000, payee: 'p2' },
+      { type: 'income', amount: 500000 },
+    ])
+    const s = settle(data)
+    expect(s.partners.find(p => p.id === 'p1')!.advance).toBe(70000)
+    expect(s.partners.find(p => p.id === 'p2')!.advance).toBe(0)
+  })
+
+  it('池子现金与净利是两回事：净利留在池子里也可以不分红', () => {
+    const data = withEntries([
+      { type: 'injection', amount: 100000, paidBy: 'p1' },
+      { type: 'income', amount: 50000 },
+    ])
+    const s = settle(data)
+    expect(s.pool).toBe(150000)
+    expect(s.netProfit).toBe(50000)
+    expect(s.partners.find(p => p.id === 'p1')!.claimable).toBe(25000)
+  })
+})
+
+describe('validateSettings', () => {
+  it('比例之和为 1 时通过', () => {
+    expect(validateSettings(DEFAULT_SETTINGS)).toBeNull()
+  })
+
+  it('比例之和不为 1 时返回错误信息', () => {
+    const bad: Settings = {
+      ...DEFAULT_SETTINGS,
+      partners: [
+        { id: 'p1', name: '我', shareRatio: 0.5 },
+        { id: 'p2', name: '伙伴', shareRatio: 0.6 },
+      ],
+    }
+    expect(validateSettings(bad)).toBe('分成比例之和必须等于 100%')
+  })
+
+  it('没有合伙人时报错', () => {
+    expect(validateSettings({ ...DEFAULT_SETTINGS, partners: [] })).toBe('至少需要一个合伙人')
+  })
+
+  // 合规成本项（检疫 / 无害化处理）不许填负数——负数会让保本价被低估，是危险的方向。
+  it('检疫费为负时报错', () => {
+    expect(validateSettings({ ...DEFAULT_SETTINGS, quarantinePerDog: -1 })).toBe('检疫费不能为负')
+  })
+
+  it('病死犬处理费为负时报错', () => {
+    expect(validateSettings({ ...DEFAULT_SETTINGS, disposalPerDog: -1 })).toBe('病死犬处理费不能为负')
+  })
+})
