@@ -3825,6 +3825,69 @@ git commit -m "feat(ui): 设置页（合伙人 / 分成 / 目标毛利 / 自定�
 > - `src/domain/actions.ts` 当前第 1 行是 `import type { AppData, Batch, Dog, DogStatus, LedgerEntry, Money } from './types'`（**没有 `Settings`，也没有 `CostItemDef`**），第 2 行是 `import { newId } from './types'`，必须原样保留。追加本任务的四个动作时，把第 1 行补齐成 Step 3 给的那行。
 > - 追加位置：文件**末尾**（现在是 `setDogQuarantine`，第 195 行之后），既有的 9 个导出函数一字不动。
 
+> **Task 13 实施记录（2026-10-03）**
+> - 实施者提交 `39e5b29 feat(ui): 设置页（合伙人 / 分成 / 目标毛利 / 自定义成本项）`（6 files / +633 / −2；父提交 `8a590e2`）。门禁：`Tests 386 passed (386)` / `Test Files 18 passed (18)`（基线 348 / 17）；`tsc -b` 无输出、`✓ 44 modules transformed`、`dist/assets/index-B90Jeqe_.js 275.59 kB / gzip 83.90 kB`、exit 0；`Found 0 warnings and 0 errors.`（52 files）；`git status --short` 空。
+> - **多出两个文件**：`src/ui/settingsForm.ts`（90 行）+ `src/ui/settingsForm.test.ts`（157 行 / 22 个 `it`）。理由与 `dogLedger.ts` / `moneyBook.ts` / `receipt.ts` 一致——这几个输入框的规则**直接决定一条设置会不会被悄悄写坏**，必须能单测。所以实际 `git add` 是 6 个显式路径。域层 `actions.test.ts` 新增 16 个 `it`（计划的 5 条是下限），合计 +38。
+> - **关键偏离（已接受，且必须保留）**：计划 Step 5 把输入框 `value` 直接派生自 `data.settings`（每次击键写库 + 重渲）。实测后果是 —— 检疫费想填 `1200.50`，敲到 `1200.` 时 `parseMoney('1200.') = 120000`、`fenToTextInput(120000) = '1200'`，**小数点被重渲吃掉**，接着敲 `5` 就写成 `12005`（差 10 倍）；毛利率想填 `60.5` 会静默存成 `605%`（`validateSettings` 只拦负数，不会响）。实施者按本仓已有先例（`src/ui/pages/CalculatePage.tsx:24` 表单放本地 state、`:37-41` 只改本地、`:27-35` 由表单推 `input`/`errors`）给 6 个输入框全部改成**本地草稿**：显示草稿、只有解析成功才写账、解析不了只报红字且一个字都不写。`settingsForm.ts` 的两个「10 倍陷阱」测试就是钉这条的。
+> - 其余已接受的偏离：`renamePartner` / `setPartnerRatio` 加 ghost id 守卫（与 `setDogStatus` 同风格，找不到返回同一引用）；合伙人名字清空**不写库**（`validateSettings` 不检查名字，存下空名会让「钱」页出现没有主语的垫付卡片）；金额负数**不写库并报红字**（`parseMoney('-5') = -500` 是合法的，而 `validateSettings` 不看这两项 ⇒ 照抄会静默把检疫费存成负的）；`formatPercent` 保留两位小数（`Math.round` 会把 60.5% 显示成「61」，看到的与存的对不上）；`inputError` 走 `Field` 的 `error` prop 而不是页面底部一行。
+> - 走查发现一处口径不一致，已裁定并派 Task 13b 修正：**死亡率的越界处理「设置」页与「算」页必须一致——拒绝，不夹取。** 详见 Task 13b。
+
+---
+
+### Task 13b: 死亡率越界口径统一（拒绝，不夹取）
+
+**为什么有这一项**：Task 13 实施者发现同一个输入在两个页面得到两种结果，并在报告里主动提出。（`39e5b29` 的状态是 `DONE_WITH_CONCERNS`，concern 就是这一条。）
+
+- `src/ui/planForm.ts:100-110` 的 `parseMortalityPercent` 对 `125` 返回 `null`，注释写明理由：**「上界 99%…与其把它 clamp 成一个用户没输入的数，不如让用户看见自己填错了。」** 「算」页因此对 `125` 报红字 `死亡率要填 0 到 99 之间的数字`，并且**不展示保本价**。
+- `src/ui/settingsForm.ts:48-53` 的 `applyMortalityInput` 对同样的 `125` **夹成 99 并写进账里**，框里显示 `99`、没有红字。
+
+**裁定：跟着「算」页走 —— 拒绝 + 红字，不夹取。** 三条理由：
+
+1. 同一件事在两个页面有两种结果，用户没法建立任何可靠预期。更糟的是「设置」页那条路是**静默**的：填 `125` 的人以为设在 125%（他可能真的是想写 125 或者手抖多打了一位），账里却是 99%，而这个数字直接决定决策台预估死几只、进而决定保本价。**错的数字比没有数字危险得多**——这句话就是 `src/ui/planForm.ts:9-11` 那段注释的核心，本条只是把它贯彻到底。
+2. 夹取把「我打错了」这个信息**抹掉**了。夹完之后框里是 99，用户没有任何线索知道自己刚才打的是 125。
+3. 成本几乎为零，而且顺带**消掉了一个重复的规则**：改成复用 `parseMortalityPercent` 之后，全仓「死亡率怎么解析」只有一个函数、一条文案。
+
+**Files:**
+- Modify: `src/ui/settingsForm.ts`
+- Modify: `src/ui/settingsForm.test.ts`
+- Modify: `src/ui/pages/SettingsPanel.tsx`（只改 `:112-119` 那段解释夹取的注释；行为不用改，因为面板已经是「`ratio === null` 就不写账」）
+
+**必须满足的行为：**
+
+1. `applyMortalityInput(raw)` **去掉 `Math.min(99, Math.max(0, percent))`**，改成直接复用 `parseMortalityPercent`：
+   ```ts
+   import { parseMortalityPercent } from './planForm'
+
+   export function applyMortalityInput(raw: string): { draft: string; ratio: number | null } {
+     const rate = parseMortalityPercent(raw)
+     if (rate === null) return { draft: raw, ratio: null }
+     return { draft: raw, ratio: rate }
+   }
+   ```
+   注意 **`parseMortalityPercent` 返回的已经是比率（`percent / 100`），不要再除 100**。
+2. **草稿永远原样保留**（`draft: raw`）。这样 `12.` 这种「打到一半」的文本不会被改写，`12.5` 能顺利填完。
+3. `inputError('mortality', raw)` 改成用同一个函数、同一句文案：
+   ```ts
+   case 'mortality':
+     return parseMortalityPercent(text) === null ? '死亡率要填 0 到 99 之间的数字' : undefined
+   ```
+   **文案必须与 `src/ui/planForm.ts:142` 逐字相同。**
+4. 不要再留任何夹取逻辑，也不要留「越界不算输入错误」的说法——`settingsForm.ts` 与 `SettingsPanel.tsx` 里解释夹取的注释要一并删掉/改写，否则下一个人会照着注释把夹取加回来。
+5. 界面行为：填 `125` → 框里仍是 `125`、下面出红字、**账不变**；填 `99.5` → 同样报红字（上界是 99）；填 `99` → 合法；填 `abc` → 报红字、账不变；填 `12.` → 不报红字也不写账，接着填 `12.5` → 写账 0.125。
+
+**测试要求**（`src/ui/settingsForm.test.ts`，必须显式 `import { describe, it, expect } from 'vitest'`）：把原来两条钉夹取的用例改成钉拒绝，并至少覆盖 —— `applyMortalityInput('125')` → `{ draft: '125', ratio: null }`；`applyMortalityInput('99.5')` → `ratio: null`；`applyMortalityInput('99')` → `ratio: 0.99`；`applyMortalityInput('-1')` → `ratio: null`；`applyMortalityInput('12.')` → `draft` 仍是 `'12.'` 且 `ratio: null`；`inputError('mortality', '125')` 逐字等于 `'死亡率要填 0 到 99 之间的数字'`；`inputError('mortality', '99')` 是 `undefined`；**一条一致性用例**证明「设置」页与「算」页对同一个输入给出同一个结论（例如断言 `inputError('mortality', '125') !== undefined` 与 `parseMortalityPercent('125') === null` 同时成立）。
+
+**Steps:**
+- [ ] **Step 1**：先改测试（TDD），跑一次看它失败。
+- [ ] **Step 2**：改 `settingsForm.ts`，让测试通过。
+- [ ] **Step 3**：清理 `SettingsPanel.tsx` 与 `settingsForm.ts` 里解释夹取的注释。
+- [ ] **Step 4**：`npx vitest run` / `npm run build` / `npm run lint` / `git status --short`。
+- [ ] **Step 5**：提交（**显式路径**）：
+  ```bash
+  git add src/ui/settingsForm.ts src/ui/settingsForm.test.ts src/ui/pages/SettingsPanel.tsx
+  git commit -m "fix(ui): 死亡率越界改为拒绝而非夹取，与算页口径统一"
+  ```
+
 ---
 
 ### Task 15: 检疫纯函数（`src/domain/quarantine.ts`）
