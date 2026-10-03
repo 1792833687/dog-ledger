@@ -157,7 +157,9 @@ export const BUILTIN_COST_ITEMS: CostItemDef[] = [
   { id: 'quarantine', name: '检疫（抗体检测+申报）', scope: 'dog', isBuiltin: true },
   // 病死犬必须无害化处理，不得买卖、加工、随意弃置（《动物防疫法》第五十七条第三款）。
   // 这是真金白银的额外支出，与「损耗摊薄」那种账面重分配性质不同。
-  { id: 'disposal', name: '病死犬无害化处理', scope: 'batch', isBuiltin: true },
+  // scope 用 'dog'：单价是按「每只病死犬」计的，而且这笔钱实际是跟着某一具尸体发生的，
+  // 记在那一只狗身上才算得清。写成 'batch' 会和 Settings.disposalPerDog 的「每只」语义打架。
+  { id: 'disposal', name: '病死犬无害化处理', scope: 'dog', isBuiltin: true },
   { id: 'aftercare_refund', name: '售后退款', scope: 'dog', isBuiltin: true },
 ]
 

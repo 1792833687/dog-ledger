@@ -1157,6 +1157,8 @@ git commit -m "feat(domain): 结算与设置校验"
 
 > **修订二带来的必填字段（本任务必须处理）**：`Batch` 现在有必填的 `plannedChannel: ChannelId`（修订二 / 设计文档 D11）。`createBatchFromPlan` 创建的批次**必须带上它**——`tsc` 会因此报错，**这是故意的，不要用 `as any`、`as unknown as` 或 `@ts-expect-error` 绕开**。同样，它创建的每只 `Dog` 必须带上 6 个检疫字段（`rabiesVaccinatedOn` / `antibodyTestedOn` / `antibodyReportNo` / `quarantineCertNo` / `quarantineCertIssuedOn` / `quarantineCertValidUntil`）：刚买回来的狗还没接种、没检测、没证明，所以四个日期填 `null`，两个编号填 `''`。不要「顺手」填今天——那会让检疫阶段的推导从第一天起就是错的。
 
+> **小数分的口径（`disposalPerDog`）**：`expectedDead = n × mortalityRate` 允许是小数，`disposalPerDog × expectedDead` 因此也是小数分。这是**期望值**——不是「要赔 0.45 具尸体」。不要把它四舍五入到整只狗：取整会让保本价随死亡率跳变，而且和同样是期望值的 `expectedAlive`（也是小数）口径不一致。四舍五入只发生在界面边界（`formatMoney`）。`createBatchFromPlan` 不记这笔支出——它是预估，不是已经花掉的钱；真死了一只狗、真付了处理费，那一刻才记一笔 `category: 'disposal'`（它的 cost item 是 `scope: 'dog'`，所以记在那一只狗身上）。
+
 - [ ] **Step 1: 写失败的测试**
 
 创建 `src/domain/planning.test.ts`：
@@ -1459,12 +1461,12 @@ export function createBatchFromPlan(
 - [ ] **Step 4: 跑测试确认通过**
 
 Run: `npx vitest run src/domain/planning.test.ts`
-Expected: 18 passed
+Expected: 全部 passed（计划片段本身只有 18 个 `it`；实际写出来的是 24 个——多出的 6 个覆盖计划只写成散文、明确留给实施者的需求：`plannedChannel` 默认值、显式渠道透传、新建狗 6 个检疫字段全空、旧批次不被改动、`freight: 0` 不记运输、`n: 0` 建空批次。数量以覆盖面为准，不以下面这个数字为准）
 
 - [ ] **Step 5: 跑全量测试**
 
 Run: `npx vitest run`
-Expected: 全部 passed（本任务结束后约 67 个；再加上 Task 15 的检疫测试与 Task 16 的渠道测试，全部任务做完约 81 个）
+Expected: 全部 passed（本任务实测 77 个；本任务新增 24 个。全部任务做完预计 95 个上下——以实际为准，不要为了凑数增删测试）
 
 - [ ] **Step 6: 提交**
 
@@ -1507,7 +1509,7 @@ describe('createMemoryStorage', () => {
 
   it('保存后能原样读回', async () => {
     const s = createMemoryStorage()
-    const data = { ...DEFAULT_DATA, batches: [{ id: 'b1', name: 'x', date: '2026-10-03', source: '', note: '', status: 'active' as const }] }
+    const data = { ...DEFAULT_DATA, batches: [{ id: 'b1', name: 'x', date: '2026-10-03', source: '', note: '', status: 'active' as const, plannedChannel: 'undecided' as const }] }
     await s.save(data)
     expect(await s.load()).toEqual(data)
   })
@@ -1523,7 +1525,7 @@ describe('createMemoryStorage', () => {
     const s = createMemoryStorage()
     const data = { ...DEFAULT_DATA, batches: [] }
     await s.save(data)
-    data.batches.push({ id: 'b9', name: 'late', date: '2026-10-04', source: '', note: '', status: 'active' })
+    data.batches.push({ id: 'b9', name: 'late', date: '2026-10-04', source: '', note: '', status: 'active', plannedChannel: 'undecided' })
     expect((await s.load())!.batches).toHaveLength(0)
   })
 })
@@ -1540,7 +1542,7 @@ describe('exportBackup / importBackup', () => {
   it('导出再导入得到等价数据', () => {
     const data = {
       ...DEFAULT_DATA,
-      batches: [{ id: 'b1', name: '一批', date: '2026-10-03', source: '农户', note: '', status: 'active' as const }],
+      batches: [{ id: 'b1', name: '一批', date: '2026-10-03', source: '农户', note: '', status: 'active' as const, plannedChannel: 'undecided' as const }],
     }
     const json = exportBackup(data)
     expect(importBackup(json)).toEqual(data)

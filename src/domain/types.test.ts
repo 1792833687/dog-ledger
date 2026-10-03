@@ -22,7 +22,7 @@ describe('默认设置', () => {
     expect(quarantine).toBeDefined()
     expect(quarantine.scope).toBe('dog')
     expect(disposal).toBeDefined()
-    expect(disposal.scope).toBe('batch')
+    expect(disposal.scope).toBe('dog')
   })
 
   it('检疫与无害化处理的默认值都是 0，不许编造价格', () => {
