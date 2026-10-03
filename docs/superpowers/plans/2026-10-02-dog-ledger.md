@@ -34,6 +34,8 @@
 - 数据模型以 `docs/superpowers/specs/2026-10-02-dog-trading-ledger-design.md` 为准。
 - 单测命令：`npx vitest run`；单文件：`npx vitest run <文件路径>`。
 - 测试环境为 `node`（领域层是纯函数，不需要 jsdom）。
+- **测试文件必须显式写 `import { describe, it, expect } from 'vitest'`。** `vite.config.ts:9` 虽然写了 `globals: true`，但 `tsconfig.app.json:7` 的 `types` 只有 `["vite/client"]`、没有 `vitest/globals`，裸写 `describe` 会让 `npm run build` 里的 `tsc -b` 报 TS2593 / TS2304。**副作用要知道**：正因为 `globals: true`，漏掉这行 import 时 `npx vitest run` **仍然是绿的**——所以「vitest 跑绿了」不能当作「类型没问题」的证据，必须看 `npm run build`。
+- **`tsconfig.app.json:21` 与 `tsconfig.node.json:18` 都开了 `noUnusedLocals: true`：多 import 一个没用到的符号会让 `npm run build` 直接失败。** 任务书 `**Interfaces:**` / `Consumes` 里列出的符号是**清单，不是抄写要求**——只 import 这个文件实际用到的。先例：Task 11 的页面声明 4 个 ledger 函数只 import 2 个是**对的**（见本文件 Task 11 的 blockquote）；Task 17b 把纯函数抽到 `src/ui/quarantineView.ts` 之后，`QuarantinePage.tsx` 就不能再 import `latestBatch`（它只在 `pickBatch` 内部被调用）。不要为了「和任务书对齐」而加一个没用到的 import。
 - 每个任务结束必须提交一次 git。
 
 ---
@@ -4077,6 +4079,13 @@ export function compareChannels(data: AppData, batchId: string, inputs: ChannelI
   git add src/ui/pages/QuarantinePage.tsx src/ui/tabs.ts src/ui/tabs.test.ts src/domain/actions.ts src/domain/actions.test.ts
   git commit -m "feat(ui): 检疫页面与出栏前检查清单"
   ```
+
+> **Task 17 实施与验收记录（2026-10-03）**
+> - 实际提交 **`d0de0a6`**（5 files / +482 / −3）。任务书里「默认选 `createdAt` 最大的批次」有误——`Batch` 上**没有 `createdAt` 字段**（`src/domain/types.ts:88-97`），实际实现为 `latestBatch(batches) = batches[batches.length - 1]`（`createBatch` 尾追写入）。**不按 `date` 排**：`date` 是这批狗的业务日期，同一天可建多批、也可给新批次填过去的日期，按它排会把刚建的批次藏起来。`src/ui/tabs.test.ts` 原本没有任何顺序断言（「检」插哪都全绿），已补 `expect(TABS.map(t => t.key)).toEqual(['calc','dogs','quarantine','money','report'])`。
+> - 「默认折叠」的口径定为：**只折叠编辑表单；只读信息（证明编号、有效期、到期天数、中性提示）全部露出来**——否则「已过期 N 天」这种最该被看见的信息要展开才看得到。
+> - 控制器用真实 Edge + CDP 走查 **59/59 PASS**（真实时间 + 真实 IndexedDB，0 条未捕获异常、0 条 `console.error`），除任务书 Step 3 外还覆盖：有效期**正好是今天**判「可出售」（边界是 `<` 不是 `<=`）、清空有效期后按「有无接种日期」分别回到「待申报检疫」/「未接种狂犬疫苗」、`sold` 的狗从页面消失且分母变「在库 2 只里有」、`returned` 的狗保留并带「· 退回的狗」且计入分母、切换批次互不串味、重载后不卡在「正在载入」。探针在 `C:\Users\17928\AppData\Local\Temp\dogledger-t17.mjs`，可复跑（注意它给的断言失败先怀疑探针自己）。
+> - **Task 17b（提交 `3210afb`）**：把本任务留在页面里、没有单测的纯函数抽到 **`src/ui/quarantineView.ts`**（与 `src/ui/dogLedger.ts` / `src/ui/moneyBook.ts` 同一套路），新增 `src/ui/quarantineView.test.ts` 25 个用例（309 → 334 passed），页面改为 import。导出：`latestBatch(batches)`、`pickBatch(batches, selectedId)`（按 id 找，找不到或为 `null` 回落 `latestBatch`）、`interface QuickAction { text: string; patch?: DogQuarantinePatch; focusCert?: boolean }`、`quickAction(stage, today)`（六阶段穷尽 `switch`，**无 `default`**）、`expiresText(days)`、`needsVaccinationDateHint(dog, stage)`。抽完**重跑同一份探针仍 59/59 PASS**，证明渲染层零变化。
+> - **待办（不是缺陷，交给 Task 12 / Task 20 的批次管理）**：批次名自动生成的永远是 `收狗 N 只`，狗号是 `` `${batchName}-${i}` ``（`src/domain/planning.ts:105`），所以同一天建两个**只数相同**的批次，会在批次下拉里显示成**两条一模一样的选项**（名字与日期都相同，id 不同），狗号也会跨批次重名。身份是安全的（`id` 唯一），「检」页按批次分开显示，当前算不出错账；但 Task 12/20 应当允许用户改批次名，或让自动名带上唯一成分。
 
 ---
 
