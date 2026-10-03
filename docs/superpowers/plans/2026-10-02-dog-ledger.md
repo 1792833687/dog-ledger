@@ -4,7 +4,7 @@
 
 **Goal:** 做一个手机端网页工具，让两位合伙人能在收狗之前算出保本价、按批次做损耗摊薄、并算清共同出资下的垫付与分账。
 
-**Architecture:** 纯前端 PWA。所有业务规则（成本、摊薄、四本账、分账、决策模拟）实现为 `src/domain/` 下的纯函数并配单元测试；整个数据集（`AppData`）作为一个对象整体读写 IndexedDB，不做增量持久化；界面层是 React 组件，手机优先、底部四标签。
+**Architecture:** 纯前端 PWA。所有业务规则（成本、摊薄、四本账、分账、决策模拟）实现为 `src/domain/` 下的纯函数并配单元测试；整个数据集（`AppData`）作为一个对象整体读写 IndexedDB，不做增量持久化；界面层是 React 组件，手机优先、底部五标签（算 / 狗 / 检 / 钱 / 报）。
 
 **Tech Stack:** Vite + React 19 + TypeScript + Tailwind CSS v4 + Vitest。无后端、无账号、无网络请求、无 UI 组件库。
 
@@ -17,6 +17,9 @@
 - 第一版**不存照片**（设计文档里的 `Dog.photoRef` 已移除，理由：备份体积与 YAGNI）。
 - 界面文案用中文。
 - **合规成本必须进成本模型**：`BUILTIN_COST_ITEMS` 含 `quarantine`（检疫）与 `disposal`（病死犬无害化处理）两项；`PlanInput` 含 `quarantinePerDog` 与 `disposalPerDog`。依据见 `docs/compliance/2026-10-02-犬只交易合规要点-法规篇.md`——检疫是出售的法定前置，没有检疫证明就是《动物防疫法》第二十九条的违法行为。任何把这笔钱排除在外的「保本价」都是错的。
+- **渠道与检疫字段必须真正用上（修订二）**：`Batch.plannedChannel` 与 `Dog` 的 6 个检疫字段（`rabiesVaccinatedOn` / `antibodyTestedOn` / `antibodyReportNo` / `quarantineCertNo` / `quarantineCertIssuedOn` / `quarantineCertValidUntil`）都是**必填**。任何创建 `Batch` 的地方都要给 `plannedChannel` 赋值（默认 `'undecided'`）；任何创建 `Dog` 的地方都要带上这 6 个字段（未接种/未检测/无证明用 `null`，编号用 `''`）。**`tsc` 会因此报错——这是故意的，不要用 `as any` 或 `@ts-expect-error` 绕开。**
+- **检疫证明是出售的硬门槛**：`isSellable()` 只在 `certified` 阶段返回 `true`。依据见 `docs/compliance/2026-10-02-犬只交易合规要点-法规篇.md`——一证多用（数量超出证载明部分、种类不符、使用转让的证明）按「未经检疫」处理，落进货值 15~30 倍罚款那一档，负责人 5 年禁业。
+- **`domain/` 里任何函数都不得调用 `new Date()`**：需要"今天"时一律由调用方把 `today: string`（`'YYYY-MM-DD'`）作为参数传进来。这让检疫阶段推导可测试，也避免"过期"的判定在不同时区下静默漂移。
 - 数据模型以 `docs/superpowers/specs/2026-10-02-dog-trading-ledger-design.md` 为准。
 - 单测命令：`npx vitest run`；单文件：`npx vitest run <文件路径>`。
 - 测试环境为 `node`（领域层是纯函数，不需要 jsdom）。
@@ -1459,7 +1462,7 @@ Expected: 18 passed
 - [ ] **Step 5: 跑全量测试**
 
 Run: `npx vitest run`
-Expected: 全部 passed（约 67 个）
+Expected: 全部 passed（本任务结束后约 67 个；再加上 Task 15 的检疫测试与 Task 16 的渠道测试，全部任务做完约 81 个）
 
 - [ ] **Step 6: 提交**
 
@@ -1745,7 +1748,7 @@ git commit -m "feat(storage): IndexedDB 存储与备份导入导出"
 
 ---
 
-### Task 8: 应用骨架（状态容器 + 底部四标签）
+### Task 8: 应用骨架（状态容器 + 底部标签栏；先做算/狗/钱/报四个，「检」由 Task 17 接入）
 
 **Files:**
 - Create: `src/state/AppDataContext.tsx`
@@ -3629,6 +3632,327 @@ Run: `npm run dev` → 手动：展开设置 → 把「我」改成真名 → �
 git add src
 git commit -m "feat(ui): 设置页（合伙人 / 分成 / 目标毛利 / 自定义成本项）"
 ```
+
+---
+
+### Task 15: 检疫纯函数（`src/domain/quarantine.ts`）
+
+**Goal:** 把设计文档 §3.7 的检疫阶段推导写成纯函数，让界面能回答「这只狗现在能不能卖」。
+
+**为什么有这一组任务（Task 15–19）**：它们来自用户批准的**修订二**。原来「检疫流程台账」被排在第二期，前提是"货源可能转为与繁育基地签约"；现在前提变了——无论走哪条渠道，检疫证明都是每一单出售的法定前置，且一证多用按货值 15~30 倍处罚、负责人 5 年禁业。**没地方记证明编号与有效期，就只能靠脑子记，这正是最贵的那类遗忘。** 同时「批次计划去向 + 渠道对照」来自 D11：线下成交是唯一走得通的路径，而各渠道成本结构差别极大。
+
+**顺序**：15 与 16 是纯函数（`domain/`，有单测）；17–19 是界面接线。19 依赖 17 的页面存在，18 依赖 16。
+
+**Files:**
+- Create: `src/domain/quarantine.ts`
+- Create: `src/domain/quarantine.test.ts`
+
+**Consumes:** `AppData` / `Dog` / `Settings`（`src/domain/types.ts`，Task 1）；`dogsOfBatch`（`src/domain/costing.ts`，Task 3）。
+
+**Interfaces（必须逐字一致）:**
+
+```ts
+import type { AppData, Dog, Settings } from './types'
+
+export type QuarantineStage =
+  | 'unvaccinated'
+  | 'waiting_antibody'
+  | 'ready_to_test'
+  | 'waiting_cert'
+  | 'certified'
+  | 'cert_expired'
+
+export interface QuarantineStatus {
+  stage: QuarantineStage
+  label: string                   // 中文标签，直接给界面用
+  nextAction: string              // 中文：下一步该做什么
+  daysUntilTestable: number | null  // 仅 waiting_antibody 时有值；其余 null
+  isSellable: boolean
+}
+
+export function addDays(isoDate: string, days: number): string
+export function daysBetween(fromIso: string, toIso: string): number
+export function quarantineStatus(dog: Dog, settings: Settings, today: string): QuarantineStatus
+export function isSellable(dog: Dog, settings: Settings, today: string): boolean
+export function certExpiresIn(dog: Dog, today: string): number | null
+
+export interface SaleCheckEntry {
+  dog: Dog
+  status: QuarantineStatus
+}
+
+export interface PreSaleChecklist {
+  sellable: Dog[]
+  blocked: SaleCheckEntry[]
+}
+
+export function preSaleChecklist(data: AppData, batchId: string, today: string): PreSaleChecklist
+export function quarantineSummary(data: AppData, batchId: string, today: string): Record<QuarantineStage, number>
+```
+
+**必须满足的行为:**
+
+1. **阶段判定严格按 §3.7 的表，且判定顺序就是下面这个顺序**（第一个匹配的即为结果）：
+   - `unvaccinated`：`dog.rabiesVaccinatedOn === null`
+   - `cert_expired`：`quarantineCertNo.trim() !== ''` 且 `quarantineCertValidUntil !== null` 且 `quarantineCertValidUntil < today` —— **必须先于 `certified` 判定**
+   - `certified`：`quarantineCertNo.trim() !== ''` 且 `quarantineCertValidUntil !== null` 且 `quarantineCertValidUntil >= today`
+   - `waiting_cert`：`dog.antibodyTestedOn !== null`（且没有有效证明）
+   - `ready_to_test`：`daysBetween(dog.rabiesVaccinatedOn, today) >= settings.rabiesWaitDays`
+   - `waiting_antibody`：以上都不满足（已接种，但还没等够）
+2. **边界（必须有测试）**：
+   - `daysBetween(rabiesVaccinatedOn, today) === settings.rabiesWaitDays` → `ready_to_test`（满当天即可送检）
+   - `quarantineCertValidUntil === today` → `certified`（有效期末尾那天仍可售）
+   - `quarantineCertValidUntil < today` → `cert_expired`，且 `isSellable === false`
+   - `quarantineCertNo === '   '`（全空格）→ 视为无证明
+3. `isSellable(dog, settings, today)` **只有** `stage === 'certified'` 时为 `true`，实现上直接返回 `quarantineStatus(...).isSellable`——**不得另写一套判定**。
+4. `daysUntilTestable`：仅在 `waiting_antibody` 时 = `settings.rabiesWaitDays - daysBetween(dog.rabiesVaccinatedOn, today)`（正数）；其余阶段为 `null`。
+5. `certExpiresIn(dog, today)`：`quarantineCertValidUntil` 非 `null` 时返回 `daysBetween(today, quarantineCertValidUntil)`（可能为负，表示已过期），否则 `null`。
+6. `preSaleChecklist`：遍历该批次所有狗（用 `dogsOfBatch`），`sellable` 收 `isSellable === true` 的，`blocked` 收其余的并带上完整 `status`。**死狗（`status === 'dead'`）也留在 `blocked` 里**——它当然不可卖，但在这里过滤掉会让清单数字与批次只数对不上（界面文案由 UI 决定）。
+7. `quarantineSummary` 返回的 `Record<QuarantineStage, number>` **6 个 key 必须全部存在**（没有的填 0），这样界面可以直接遍历。
+8. **日期算术不得依赖本地时区**。实现照这个写：
+   ```ts
+   export function addDays(isoDate: string, days: number): string {
+     const [y, m, d] = isoDate.split('-').map(Number)
+     const base = new Date(Date.UTC(y, m - 1, d))
+     base.setUTCDate(base.getUTCDate() + days)
+     return base.toISOString().slice(0, 10)
+   }
+   ```
+   `daysBetween(fromIso, toIso)` 同样用 `Date.UTC` 解析两侧，相减后除以 `86400000`，返回整数。**不要用 `new Date(isoDate)` 配本地时区方法**——那样晚上会差一天。
+9. 本文件**不得出现无参 `new Date()`**（"今天"一律由调用方传入），不得 import React / storage。今天用 `today` 参数比较时，`'YYYY-MM-DD'` 字符串直接比大小即可（字典序=时间序）。
+10. `label` / `nextAction` 是直接显示给用户的中文，建议取值：
+    - `unvaccinated` → 「未接种狂犬疫苗」/「先带去接种狂犬疫苗」
+    - `waiting_antibody` → 「等待抗体检测期」/「再等 N 天才能采血送检」
+    - `ready_to_test` → 「可以送检」/「去采血做免疫抗体检测」
+    - `waiting_cert` → 「待申报检疫」/「提前 3 天向当地动物卫生监督机构申报」
+    - `certified` → 「可出售」/「已具备检疫证明，可以出售」
+    - `cert_expired` → 「检疫证明已过期」/「必须重新申报检疫，不能用旧证出售」
+
+**测试要求**：`src/domain/quarantine.test.ts` 至少覆盖 6 个阶段各一例；上面第 2 条的 4 个边界；`preSaleChecklist` 的「8 只里 3 只没有有效证明」案例（断言 `blocked.length === 3` 且正是那 3 只）；`quarantineSummary` 的 6 个 key 齐全；`certExpiresIn` 对无证明返回 `null`。测试一律显式 `import { describe, it, expect } from 'vitest'`（仓库没有 `vitest/globals` 类型，裸写会让 `tsc -b` 报 TS2593/TS2304）。
+
+**Steps:**
+- [ ] **Step 0**：`git log --oneline -3` 确认工作区干净；read `src/domain/types.ts`（拿到 `Dog` / `Settings` 的确切字段名）与 `src/domain/costing.ts`（`dogsOfBatch` 签名）。字段名以代码为准，本任务书里的名字若与代码不符，**以代码为准并报告差异**。
+- [ ] **Step 1**：先写测试（TDD）。`npx vitest run src/domain/quarantine.test.ts` → 预期失败于 `Cannot find module './quarantine'`。
+- [ ] **Step 2**：写实现，直到单文件全绿。
+- [ ] **Step 3**：`npx vitest run` → 全仓通过。
+- [ ] **Step 4**：`npm run build` → 无 TS 错误。
+- [ ] **Step 5**：`npm run lint` → 0 warnings 0 errors。
+- [ ] **Step 6**：提交（只 add 这两个文件，**不要用 `git add -A`**）：
+  ```bash
+  git add src/domain/quarantine.ts src/domain/quarantine.test.ts
+  git commit -m "feat(domain): 检疫阶段推导与出栏前检查清单"
+  ```
+
+---
+
+### Task 16: 渠道对照纯函数（`src/domain/channels.ts` + `costing.ts` 小重构）
+
+**Goal:** 让「同一批狗走不同渠道」能各自算出保本单价与每只利润，且**与决策台共用同一套摊薄算法**。
+
+**Files:**
+- Modify: `src/domain/costing.ts`（抽出唯一的摊薄入口）
+- Create: `src/domain/channels.ts`
+- Create: `src/domain/channels.test.ts`
+
+**Consumes:** `ChannelId` / `SALES_CHANNELS` / `Money` / `AppData`（`src/domain/types.ts`）；`aliveCount` / `batchTotalCost`（`src/domain/costing.ts`）。
+
+**Interfaces（必须逐字一致）:**
+
+先在 `src/domain/costing.ts` 新增这个函数：
+
+```ts
+/**
+ * 一批狗的「每只存活狗真实成本」（分，可能带小数）= 批次总成本 ÷ 存活数。
+ * 这是全仓唯一的摊薄算法：dilutedCostFen 与渠道对照都走这里。
+ * 整批死光时返回 0，调用方自行决定退化行为。
+ */
+export function batchPerDogCostFen(data: AppData, batchId: string): number {
+  const alive = aliveCount(data, batchId)
+  if (alive === 0) return 0
+  return batchTotalCost(data, batchId) / alive
+}
+```
+
+并把已有的 `dilutedCostFen`（`src/domain/costing.ts:49-56`）最后一行由 `return batchTotalCost(data, dog.batchId) / alive` 改为 `return batchPerDogCostFen(data, dog.batchId)`。它上面两行提前返回（`if (!dog) return own`、`if (alive === 0) return own`）**保持原样**，可观测行为完全不变——已有的 15 个 `costing.test.ts` 测试必须**一字不改地继续通过**。
+
+再新建 `src/domain/channels.ts`：
+
+```ts
+import type { AppData, ChannelId, Money } from './types'
+
+export interface ChannelInput {
+  channelId: ChannelId
+  unitPriceFen: Money      // 你打算在这个渠道卖多少钱
+  extraPerDogFen: Money    // 该渠道每只额外成本（包装、代卖抽成、送笼…）
+  fixedCostFen: Money      // 该渠道专属固定成本（摊位费、进场费、一次性起送费…）
+}
+
+export interface ChannelBreakdown {
+  channelId: ChannelId
+  name: string                   // 取自 SALES_CHANNELS
+  basePerDogCostFen: number      // 每只存活狗真实成本（含检疫）
+  extraPerDogFen: Money
+  fixedPerDogFen: number         // fixedCostFen ÷ 存活数
+  breakEvenUnitPriceFen: number  // 保本单价 = base + extra + fixedPerDog
+  perDogProfitFen: number        // unitPriceFen − breakEvenUnitPriceFen（负 = 亏）
+  isLoss: boolean
+}
+
+export function compareChannels(data: AppData, batchId: string, inputs: ChannelInput[]): ChannelBreakdown[]
+```
+
+**必须满足的行为:**
+
+1. `basePerDogCostFen` 必须来自 `batchPerDogCostFen(data, batchId)`——**本文件不得自己算批次总成本或存活数**。
+2. `fixedPerDogFen = aliveCount(data, batchId) === 0 ? 0 : fixedCostFen / aliveCount(data, batchId)`。存活数为 0 时不除零、不抛错。
+3. `breakEvenUnitPriceFen = basePerDogCostFen + extraPerDogFen + fixedPerDogFen`。
+4. `perDogProfitFen = unitPriceFen - breakEvenUnitPriceFen`；`isLoss = perDogProfitFen < 0`（**等于 0 不算亏**）。
+5. 返回数组**顺序与 `inputs` 一致**，不要排序（界面按此顺序渲染）。
+6. `name` 从 `SALES_CHANNELS` 按 `channelId` 查找；查不到时回退为该 `channelId` 字符串本身，**不要抛错**（渠道清单将来会变）。
+7. `channelId === 'undecided'` 且两个成本都是 0 时，`breakEvenUnitPriceFen` 必须**精确等于** `batchPerDogCostFen(data, batchId)`。这是"与决策台共用同一套算法"的回归测试，必须有断言。
+8. 允许小数分（与 `dilutedCostFen` 一致），**不要在这里四舍五入**——四舍五入只发生在界面边界（`formatMoney`）。
+9. 纯函数：不 import React / storage，不调用 `new Date()`。
+
+**测试要求**：`src/domain/channels.test.ts` 至少覆盖：`undecided` 基准值（两个成本填 0，断言与 `batchPerDogCostFen` 精确相等）；两条渠道在同样 `unitPriceFen` 下一个赚一个亏；`fixedCostFen` 正确摊到存活数上（断言 `fixedPerDogFen === fixedCostFen / alive`）；`aliveCount === 0` 的批次不崩溃且 `fixedPerDogFen === 0`；返回顺序与输入一致；未知 `channelId` 回落为字符串。测试一律显式 `import { describe, it, expect } from 'vitest'`。
+
+**Steps:**
+- [ ] **Step 0**：read `src/domain/costing.ts` 与 `src/domain/costing.test.ts`，确认 `dilutedCostFen` 现有行为与那 15 个测试的内容。
+- [ ] **Step 1**：先做 `costing.ts` 重构 → `npx vitest run src/domain/costing.test.ts` 必须仍是 **15 passed 且测试文件一字未改**。
+- [ ] **Step 2**：TDD 写 `channels.test.ts` → 失败于 `Cannot find module './channels'`。
+- [ ] **Step 3**：写 `channels.ts`，直到全绿。
+- [ ] **Step 4**：`npx vitest run` → 全仓通过。
+- [ ] **Step 5**：`npm run build` / `npm run lint`。
+- [ ] **Step 6**：提交：
+  ```bash
+  git add src/domain/costing.ts src/domain/channels.ts src/domain/channels.test.ts
+  git commit -m "feat(domain): 渠道对照（与决策台共用摊薄算法）"
+  ```
+
+---
+
+### Task 17: 「检」页面 + 底部导航接线
+
+**Goal:** 让用户在一屏内看到「这批狗谁能卖、谁不能卖、为什么」。
+
+**Files:**
+- Create: `src/ui/pages/QuarantinePage.tsx`
+- Modify: `src/App.tsx`（底部标签栏加第 5 个「检」）
+- 需要的子组件自行决定（例如 `src/ui/components/DogQuarantineCard.tsx`）
+
+**Consumes:** `quarantineStatus` / `isSellable` / `preSaleChecklist` / `addDays`（`src/domain/quarantine.ts`，Task 15）；`AppData` / `SALES_CHANNELS`（types.ts）；Task 8 建立的状态容器与保存入口。
+
+**必须满足的行为:**
+
+1. 页面顶部是批次选择器，默认选中**最近创建的批次**（`createdAt` 最大者）。没有批次时显示空状态：「先去「算」页面建一个批次。」
+2. 每只狗一张卡片，显示：编号、`status.label`、`status.nextAction`、`waiting_antibody` 时的「还要等 N 天」（用 `daysUntilTestable`）、检疫证明编号、证明有效期、以及 `certExpiresIn` 的天数（负值显示「已过期 N 天」）。
+3. 卡片默认**折叠**，只露出阶段标签 + 一个快捷动作按钮；展开后是 6 个字段的编辑表单：
+   - `rabiesVaccinatedOn` / `antibodyTestedOn` / `quarantineCertIssuedOn` / `quarantineCertValidUntil`：`<input type="date">`
+   - `antibodyReportNo` / `quarantineCertNo`：文本输入
+   - 改动立刻写入 `AppData` 并走**已有的保存流程**（不要另建保存机制）
+4. 快捷动作按钮按阶段给最省事的那个：
+   - `unvaccinated` → 「今天已接种」：把 `rabiesVaccinatedOn` 设成今天
+   - `ready_to_test` → 「今天已送检」：把 `antibodyTestedOn` 设成今天
+   - `waiting_cert` → 「已有证明」：展开表单并聚焦 `quarantineCertNo`
+   - 其余阶段不给快捷按钮
+5. 页面底部是 `preSaleChecklist` 的结果：
+   - 全部可卖 → 绿色确认块：「这批 N 只全部具备有效检疫证明，可以出售。」
+   - 有 blocked → 醒目警告块，标题「N 只里有 M 只不能卖」，逐条列出狗编号 + 阶段原因，并固定附一句：「检疫证明与狗不一致（数量超出证明载明部分、种类不符、使用别人的证明）会被按『未经检疫』处理，罚款是货值的 15~30 倍。」
+6. **「今天」从哪来**：页面内部用 `new Date()` 取一次当天并格式化成 `'YYYY-MM-DD'`。**这是 UI 层，允许用 `new Date()`；`domain/` 里不允许**（见 Global Constraints）。必须格式化成局部日期，**不要用 `toISOString()`**（按 UTC 算，晚上会差一天）：
+   ```ts
+   const d = new Date()
+   const today = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+   ```
+7. 底部导航变成 **5 项：算 / 狗 / 检 / 钱 / 报**，顺序与设计文档 §4 的表一致。
+8. 界面文案全中文。
+
+**Steps:**
+- [ ] **Step 0**：read `src/App.tsx` 与 Task 8/10 产出的页面，确认导航与状态容器的写法；read `src/domain/quarantine.ts` 确认实际签名。
+- [ ] **Step 1**：实现页面与导航。
+- [ ] **Step 2**：`npx vitest run`（本任务不加 domain 测试，应仍全绿）、`npm run build`、`npm run lint`。
+- [ ] **Step 3**：`npm run dev` 手动验证（这是本任务的主要验收方式）：建一个批次 → 收 3 只狗 → 「检」页面应显示 3 只未接种 → 点「今天已接种」→ 变「等待抗体检测期」并显示还要等 21 天 → 把设置里的等待天数改成 0 → 变「可以送检」→ 点「今天已送检」→ 变「待申报检疫」→ 填证明编号与有效期 → 变「可出售」，底部变绿色确认块 → 把有效期改成昨天 → 变「检疫证明已过期」，底部警告块列出它。
+- [ ] **Step 4**：提交：
+  ```bash
+  git add src
+  git commit -m "feat(ui): 检疫页面与出栏前检查清单"
+  ```
+
+---
+
+### Task 18: 渠道对照接进「算」页面与批次详情
+
+**Goal:** 出门看狗之前能顺便回答「这批走哪条路更划算」。
+
+**Files:**
+- Modify: `src/ui/pages/CalculatePage.tsx`（加渠道对照区块）
+- Modify: 批次详情页（显示并允许修改 `plannedChannel`）
+- Modify: 「一键建批次」的调用处（把选中的渠道写进 `plannedChannel`）
+
+**Consumes:** `compareChannels` / `ChannelInput` / `ChannelBreakdown`（`src/domain/channels.ts`，Task 16）；`batchPerDogCostFen` / `aliveCount`（`src/domain/costing.ts`）；`SALES_CHANNELS` / `ChannelId`（types.ts）；`formatMoney` / `fenToYuan` / `parseMoney`（`src/domain/money.ts`）。
+
+**必须满足的行为:**
+
+1. 「算」页面在保本价结果**下方**加一个**默认折叠**的「渠道对照」区块，标题旁一句：「同一批狗，走不同的路，最低可卖价不一样。」
+2. 展开后，对 `SALES_CHANNELS` 里除 `undecided` 外的 **8 条渠道**各一行，每行三个输入：**预期单价** / **每只额外成本** / **该渠道固定成本**（都走 `parseMoney`，留空按 0）。
+3. 每行实时显示 **保本单价** 与 **每只利润**。`isLoss` 为 true 的行标红并写「亏」，否则标绿。
+4. 区块顶部有**存活数**输入（默认取计划里的 `count × (1 − mortalityRate)` 向上取整），因为它决定固定成本摊到几只上。这个数字要能手动改。
+5. 渠道对照**必须调用 `compareChannels`**，界面里不得出现 `base + extra + fixed / n` 这类自己算的式子。**「算」页还没有真实批次时**，用 `{ batches: [{ id: '__plan__', ... }], dogs: [], ledger: [] }` 这样的临时 `AppData`（批次内含一条每只成本 = 决策台算出的每只成本的支出流水），再调用 `compareChannels`——**成本只能有一处算法**。实现时若发现更干净的做法，可以改，但必须满足"界面里没有第二套成本公式"。
+6. 「一键存为批次」时，把用户在渠道对照里**选中的那一条**（默认 `undecided`）写进 `batch.plannedChannel`。
+7. 批次详情页显示「计划去向：宠物店」，可点击修改（下拉列 `SALES_CHANNELS`），改完立刻保存。
+8. 金额显示一律走 `formatMoney`（只在界面边界四舍五入）。
+9. 界面文案全中文。
+
+**Steps:**
+- [ ] **Step 0**：read `src/ui/pages/CalculatePage.tsx` 与批次详情页，确认现有 `input` useMemo 与「存为批次」的调用链。
+- [ ] **Step 1**：实现渠道对照区块。
+- [ ] **Step 2**：把 `plannedChannel` 接进建批次与批次详情。
+- [ ] **Step 3**：`npx vitest run` / `npm run build` / `npm run lint`。
+- [ ] **Step 4**：`npm run dev` 手动验证：填一个批次 → 展开渠道对照 → 「宠物店」填单价 900、每只成本 0、固定成本 0 → 保本单价应等于决策台的每只成本；「犬市」填固定成本 400、单价 900 → 保本单价变高、可能标红 → 存为批次后进批次详情 → 计划去向是选中的那条，能改。
+- [ ] **Step 5**：提交：
+  ```bash
+  git add src
+  git commit -m "feat(ui): 渠道对照与批次计划去向"
+  ```
+
+---
+
+### Task 19: 设置面板补两个检疫天数 + 校验
+
+**Goal:** `rabiesWaitDays` 与 `quarantineLeadDays` 必须能在界面上改——默认 21 / 3 是国家规程的转述值，本地实际要求不同时要能改。
+
+**Files:**
+- Modify: `src/domain/settlement.ts`（`validateSettings` 加两个字段的校验）
+- Modify: `src/domain/settlement.test.ts`（加对应测试）
+- Modify: `src/ui/pages/SettingsPanel.tsx`（两个输入框）
+
+**Consumes:** `Settings` / `DEFAULT_SETTINGS`（types.ts）；`validateSettings`（`src/domain/settlement.ts`，Task 5）；Task 13 已有的表单组件 `Field`。
+
+**必须满足的行为:**
+
+1. `validateSettings` 新增两条：
+   ```ts
+   if (!(settings.rabiesWaitDays >= 0)) return '狂犬免疫后等待天数不能为负'
+   if (!(settings.quarantineLeadDays >= 0)) return '检疫申报提前天数不能为负'
+   ```
+   两条都要能拦住 `-1` **与 `NaN`**。注意现有校验的写法风格是 `!(x >= 0)` 而不是 `x < 0`（`NaN` 会被前者拦下）——**保持一致**。
+2. 设置面板加两个数字输入：「狂犬免疫后等待天数」（默认 21）、「申报检疫提前天数」（默认 3），各自下面一句说明：
+   - 天数一：「国家规程要求免疫满这个天数才能送检。默认 21 来自规程转述，**以当地动物卫生监督机构的答复为准**，问清了就改成真值。」
+   - 天数二：「出售前要提前这么多天申报检疫（《动物检疫管理办法》第八条第二款是三天）。」
+3. 两个输入留空或非法时**不得写入 `AppData`**（走已有输入组件的"解析失败即不保存"模式），并给一句提示。
+4. 改完保存后，「检」页面的阶段判定立刻反映新值（不需要重启）。
+5. 界面文案全中文。
+
+**Steps:**
+- [ ] **Step 0**：read `src/domain/settlement.ts` 与 `src/domain/settlement.test.ts`，确认 `validateSettings` 现有条目与测试风格；read `src/ui/pages/SettingsPanel.tsx`。
+- [ ] **Step 1**：先给 `settlement.test.ts` 加两个负数用例（TDD）→ 运行应失败。
+- [ ] **Step 2**：改 `validateSettings` 直到通过 → `npx vitest run src/domain/settlement.test.ts`。
+- [ ] **Step 3**：改设置面板。
+- [ ] **Step 4**：`npx vitest run` / `npm run build` / `npm run lint`。
+- [ ] **Step 5**：`npm run dev` 手动验证：把等待天数改成 0 → 回「检」页面，刚接种的狗应立刻变成「可以送检」。
+- [ ] **Step 6**：提交：
+  ```bash
+  git add src
+  git commit -m "feat(ui): 设置面板补检疫天数并校验"
+  ```
 
 ---
 
