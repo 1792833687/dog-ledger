@@ -1149,11 +1149,13 @@ git commit -m "feat(domain): 结算与设置校验"
 **Interfaces:**
 - Consumes: `AppData`、`Money`、`Settings`、`Batch`、`Dog`、`LedgerEntry`、`newId`（Task 1）；`yuanToFen`（Task 2）
 - Produces:
-  - `interface PlanInput { n, purchasePrice, freight, medicalPerDog, mortalityRate, targetPrice }`（金额字段均为 `Money`）
+  - `interface PlanInput { n, purchasePrice, freight, medicalPerDog, quarantinePerDog, disposalPerDog, mortalityRate, targetPrice }`（金额字段均为 `Money`）
   - `interface PlanScenario { soldCount: number; revenue: Money; profitFen: number; perPartnerFen: number }`
   - `interface PlanResult { totalCost, expectedAlive, breakEvenPriceFen, suggestedPriceFen, scenarios }`
   - `plan(settings: Settings, input: PlanInput): PlanResult`
-  - `createBatchFromPlan(data: AppData, input: PlanInput, batchName: string, date: string): AppData`
+  - `createBatchFromPlan(data: AppData, input: PlanInput, batchName: string, date: string, plannedChannel?: ChannelId): AppData`（`plannedChannel` 省略时用 `'undecided'`）
+
+> **修订二带来的必填字段（本任务必须处理）**：`Batch` 现在有必填的 `plannedChannel: ChannelId`（修订二 / 设计文档 D11）。`createBatchFromPlan` 创建的批次**必须带上它**——`tsc` 会因此报错，**这是故意的，不要用 `as any`、`as unknown as` 或 `@ts-expect-error` 绕开**。同样，它创建的每只 `Dog` 必须带上 6 个检疫字段（`rabiesVaccinatedOn` / `antibodyTestedOn` / `antibodyReportNo` / `quarantineCertNo` / `quarantineCertIssuedOn` / `quarantineCertValidUntil`）：刚买回来的狗还没接种、没检测、没证明，所以四个日期填 `null`，两个编号填 `''`。不要「顺手」填今天——那会让检疫阶段的推导从第一天起就是错的。
 
 - [ ] **Step 1: 写失败的测试**
 
