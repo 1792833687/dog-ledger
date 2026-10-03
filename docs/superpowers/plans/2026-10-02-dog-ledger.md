@@ -3329,7 +3329,7 @@ export async function receiptToBlob(
 - [ ] **Step 4: 跑测试确认通过**
 
 Run: `npx vitest run src/ui/receipt.test.ts`
-Expected: 3 passed
+Expected: 全部 passed（任务书原稿下面只给了 3 条用例，**实际实施写了 14 条**——多出来的钉在「只有净利那一行高亮」「每位合伙人恰好 3 行且用名字不用 id」「批次行在库含退回」「25 行也装得下」「长标签要截断」这类**只能看图才发现**的版面上。3 是下限，不是上限。）
 
 - [ ] **Step 5: 实现页面**
 
@@ -3465,22 +3465,27 @@ export function ReportPage() {
         <section className="mt-4 rounded-xl bg-white p-4 shadow-sm">
           <h2 className="text-sm font-semibold text-gray-700">批次盈亏排行</h2>
           <ul className="mt-2 space-y-2">
-            {ranking.map(({ batch, summary }) => (
-              <li key={batch.id} className="flex items-center justify-between text-sm">
-                <span>{batch.name}</span>
-                <span className={summary.netProfitFen >= 0 ? 'text-emerald-600' : 'text-red-500'}>
-                  {formatMoney(summary.netProfitFen)}
-                  <span className="ml-2 text-xs text-gray-400">
-                    死亡率 {summary.dead + summary.sold + summary.inStock + summary.returned > 0
-                      ? Math.round(summary.dead / (summary.dead + summary.sold + summary.inStock + summary.returned) * 100)
-                      : 0}%
+            {ranking.map(({ batch, summary }) => {
+              // 死亡率的分母只数一遍：`inStock` 里已经含了退回的狗（见 src/domain/costing.ts:27-30 的 inStockCount），
+              // 再加 `returned` 会把退回的狗算两次，让死亡率偏低。
+              const total = summary.sold + summary.dead + summary.inStock
+              return (
+                <li key={batch.id} className="flex items-center justify-between text-sm">
+                  <span>{batch.name}</span>
+                  <span className={summary.netProfitFen >= 0 ? 'text-emerald-600' : 'text-red-500'}>
+                    {formatMoney(summary.netProfitFen)}
+                    <span className="ml-2 text-xs text-gray-400">
+                      {total > 0 && `死亡率 ${((summary.dead / total) * 100).toFixed(1)}%`}
+                    </span>
                   </span>
-                </span>
-              </li>
-            ))}
+                </li>
+              )
+            })}
           </ul>
         </section>
       )}
+
+> **死亡率分母的坑（2026-10-03 实施者发现、控制器确认）**：上面这段原来写的是 `dead / (dead + sold + inStock + returned)`，**这是错的**——`src/domain/costing.ts:27-30` 的 `inStockCount` 已经把 `returned` 算进在库了（注释：「退狗（returned）回到在库：它又站在笼子里了，还得再卖一次，所以进分母」）。把 `returned` 再加一次，退回的狗就被数了两遍，分母虚高、死亡率偏低。实例：一批 10 只（4 售出、2 死亡、4 在库其中 2 只是退回的）→ 错公式给 4/16 = 25%，正确是 2/10 = **20%**。**退狗越多，这个偏差越大**，而死亡率正是用来判断「这批狗是不是死太多了」的指标，偏低的死亡率会让人放心得太早。
     </div>
   )
 }
@@ -3500,6 +3505,14 @@ git commit -m "feat(ui): 对账页面与一键对账单图片"
 ```
 
 > **`git add` 的路径必须逐字列出。** 这个仓库里同时可能有人在改别的文件，`git add src` 会把别人写了一半的工作扫进你的提交（已经发生过一次，见本计划的 controller incident 记录）。
+
+> **Task 12 实施记录（2026-10-03）**
+> - 实际提交 **`6f64a95773255a636be04476fe90564e9ecc7328`**（父 `18b754f`，3 files / +522 / −1）：`src/ui/receipt.ts`(176)、`src/ui/receipt.test.ts`(167 / **14 个 `it`**)、`src/ui/pages/ReportPage.tsx`(181，整体替换掉 3 行占位)。全仓 **334 → 348 passed / 17 files**；build ✓ 42 modules / 269.50 kB；lint 0/0 on 49 files；`git status --short` 空。TDD 红态是 `Error: Cannot find module './receipt'`。
+> - **实施者发现并修正了本节的一处真错误**：死亡率分母见上面那段警告块。这是数字会算错的缺陷，不是措辞问题，已把本节代码片段改成正确版本。
+> - 另外三处实施者的加法（控制器接受）：①新增导出 `receiptSize(rowCount)` 与 `interface TextMeasurer`——让「画布够不够高」与「文字放不放得下」可测，真 `CanvasRenderingContext2D` 结构上就满足 `TextMeasurer`，所以测试里可以用假尺子而不用 cast；②新增导出 `fitText(measurer, text, maxWidth)`——本节原来按 `width / 2 - 40` 给标签留**写死**的宽度，而批次那行的值（`在库 3 / 已售 1 / 死亡 1 · ¥1,000`）本身就能长到约 420px，用户把批次名取长一点两段文字就会叠在一起；改成按 `measureText(row.value).width` 反推标签可用宽度，超宽加 `…`。**这张图是发给合伙人看的，叠一行等于少一行信息**；③`canvas.getContext('2d')` 不用 `!` 断言，改成 `if (ctx === null) throw new Error('这个浏览器拿不到 canvas 绘图上下文，生成不了对账单图片')`——中文错误会顺着 `shareReceipt` 的 catch 显示给用户，比静默的 `TypeError` 强。
+> - 实施者自己踩的坑：`expect(size.height).toBe(190 + 0 * 64 + 60)` 被 oxlint 判 `erasing-op`（门禁要 0 warning），改成 `toBe(250)` 并把行高增量单独用一条测试钉住。
+> - **单测覆盖不到的部分**：`drawReceipt` / `receiptToBlob` / `downloadBlob` / `shareReceipt` 需要真 canvas 与真 `navigator`，本仓没有 jsdom，只能靠控制器的真实浏览器探针。
+> - 控制器复核：四条门禁独立重跑，数字与实施者报告一致（348 passed / 17 files、42 modules、269.50 kB、lint 0/0 on 49 files）。
 
 ---
 
