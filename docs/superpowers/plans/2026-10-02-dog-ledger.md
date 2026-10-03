@@ -3873,7 +3873,9 @@ git commit -m "feat(ui): 设置页（合伙人 / 分成 / 目标毛利 / 自定�
    ```
    **文案必须与 `src/ui/planForm.ts:142` 逐字相同。**
 4. 不要再留任何夹取逻辑，也不要留「越界不算输入错误」的说法——`settingsForm.ts` 与 `SettingsPanel.tsx` 里解释夹取的注释要一并删掉/改写，否则下一个人会照着注释把夹取加回来。
-5. 界面行为：填 `125` → 框里仍是 `125`、下面出红字、**账不变**；填 `99.5` → 同样报红字（上界是 99）；填 `99` → 合法；填 `abc` → 报红字、账不变；填 `12.` → 不报红字也不写账，接着填 `12.5` → 写账 0.125。
+5. 界面行为：填 `125` → 框里仍是 `125`、下面出红字、**账不变**；填 `99.5` → 同样报红字（上界是 99）；填 `99` → 合法；填 `abc` → 报红字、账不变；填 `12.` → **会报红字**（`parseMortalityPercent` 的正则 `/^\d+(\.\d+)?$/` 本来就拒绝尾点，`src/ui/planForm.ts:103`）且不写账，接着打出 `5` 成 `12.5` → 红字立刻消失、写账 0.125。
+   - **这一条原先写的是「填 `12.` 不报红字」，与同节第 3 条给的实现片段自相矛盾**（第 3 条要求 `inputError` 用同一个 `parseMortalityPercent`，而那个函数拒绝尾点）。实施者按第 3 条字面实现并报了上来（Task 13b 报告 §⑥1）。**控制器裁定：接受现状，红字闪一下**。理由：要满足原第 5 条就得给死亡率配第二套「尾点容忍」规则，那正是本条要消掉的东西；而 `src/ui/pages/CalculatePage.tsx:27-30` 的 `useMemo(() => parsePlanText(...))` + `:82` 把 `errors.mortalityPercent` 交给 `Field`，**「算」页对 `12.` 现在就是实时红字**，两个页面对同一个输入给出同一个结论才是本条的真正目的。
+   - 已验证：「两个数字框对'打到一半'的处理不同」——`applyPercentInput('12.')`（分组比例 / 目标毛利率）会**立刻写账 0.12**（`parseNumber` 收尾点），`applyMortalityInput('12.')` 不写账且报红。这是既有设计（比例的越界交给页面底部 `validateSettings` 的红字说），本次**故意不动**，留作后续单独任务。
 
 **测试要求**（`src/ui/settingsForm.test.ts`，必须显式 `import { describe, it, expect } from 'vitest'`）：把原来两条钉夹取的用例改成钉拒绝，并至少覆盖 —— `applyMortalityInput('125')` → `{ draft: '125', ratio: null }`；`applyMortalityInput('99.5')` → `ratio: null`；`applyMortalityInput('99')` → `ratio: 0.99`；`applyMortalityInput('-1')` → `ratio: null`；`applyMortalityInput('12.')` → `draft` 仍是 `'12.'` 且 `ratio: null`；`inputError('mortality', '125')` 逐字等于 `'死亡率要填 0 到 99 之间的数字'`；`inputError('mortality', '99')` 是 `undefined`；**一条一致性用例**证明「设置」页与「算」页对同一个输入给出同一个结论（例如断言 `inputError('mortality', '125') !== undefined` 与 `parseMortalityPercent('125') === null` 同时成立）。
 
@@ -3887,6 +3889,13 @@ git commit -m "feat(ui): 设置页（合伙人 / 分成 / 目标毛利 / 自定�
   git add src/ui/settingsForm.ts src/ui/settingsForm.test.ts src/ui/pages/SettingsPanel.tsx
   git commit -m "fix(ui): 死亡率越界改为拒绝而非夹取，与算页口径统一"
   ```
+
+> **Task 13b 实施记录（2026-10-03）**
+> - 实施者提交 `343df16 fix(ui): 死亡率越界改为拒绝而非夹取，与算页口径统一`（3 files / +69 / −24；父提交 `5ee6cfa`）。门禁：`Tests 390 passed (390)` / `Test Files 18 passed (18)`（基线 386，净 +4）；`tsc -b` 无输出、`✓ 44 modules transformed`、`✓ built in 230ms`；`Found 0 warnings and 0 errors.`（52 files）；提交后 `git status --short` 空。
+> - TDD 红态 `Tests 7 failed | 19 passed (26)`，失败原文含 `AssertionError: expected { draft: '12.', ratio: 0.12 } to deeply equal { draft: '12.', ratio: null }`、`expected 0.99 to be null`（`'125'` 与 `'99.5'`）、`expected undefined to be '死亡率要填 0 到 99 之间的数字'`。
+> - 落地：`src/ui/settingsForm.ts:5` 新增 `import { parseMortalityPercent } from './planForm'`（planForm 不反向 import，无循环）；`:56-60` 删掉 `Math.min(99, Math.max(0, percent))`、改成 `const rate = parseMortalityPercent(raw)` 且**没有再除 100**；`:92-93` 的 `case 'mortality'` 用同一个函数、文案与 `src/ui/planForm.ts:142` 逐字相同；`:74-81` 的注释从「数字但越界不算错误」改写为「越界算错误」。`SettingsPanel.tsx:112-119` 只改注释，`onChange` 逻辑一行未动（面板本来就是 `ratio === null` 就不写账）。
+> - 测试从 26 条增到 30 条（`settingsForm.test.ts`）：拒绝组含 `'12.'`/`'125'`/`'-3'`/`'100'`/`'99'`(→0.99)/`'99.5'`；越界红字组逐字断言三条；新增**一致性 describe**（12 个样本，含 `''`、`'  '`、`'12.'`、`'25%'`）钉住「`ratio === null` ⇔ `parseMortalityPercent === null` ⇔ 有红字（空串除外）」。
+> - 实施者报的三个遗留（控制器均接受）：①`applyPercentInput('12.')` 立刻写账而 `applyMortalityInput('12.')` 不写（见行为 5 的第二条，故意不动）；②死亡率的输入路径现在最多只能产出 `<1` 的值，`validateSettings` 对 `expectedMortalityRate` 的范围检查已不可能从这条路径触发（保留作兜底）；③「填 125 后直接切页离开，草稿是否还在」取决于 `SettingsPanel` 的挂载方式——`src/App.tsx:17-23` 是 `<Current />` 单组件渲染，**切标签会卸载页面、草稿随组件一起消失**，下次进来看到的是账上的值。这不产生错误数据，属可接受行为。
 
 ---
 
