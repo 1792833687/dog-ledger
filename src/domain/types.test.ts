@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { DEFAULT_SETTINGS, DEFAULT_DATA, BUILTIN_COST_ITEMS, newId } from './types'
+import { DEFAULT_SETTINGS, DEFAULT_DATA, BUILTIN_COST_ITEMS, SALES_CHANNELS, newId } from './types'
 
 describe('默认设置', () => {
   it('分成比例之和为 1', () => {
@@ -38,5 +38,39 @@ describe('默认设置', () => {
 
   it('newId 每次返回不同的值', () => {
     expect(newId()).not.toBe(newId())
+  })
+})
+
+describe('销售渠道', () => {
+  // 抖音小店与「抖音引流到微信」两条路都已堵死（见 docs/compliance/ 平台篇与销售路径篇），
+  // 所以渠道清单里不该出现任何抖音相关选项 —— 留着会诱导用户去走那条会被永久封号的路。
+  it('渠道清单里没有抖音相关渠道，默认是「未定」', () => {
+    expect(SALES_CHANNELS.length).toBeGreaterThan(1)
+    expect(SALES_CHANNELS[0].id).toBe('undecided')
+    const ids = SALES_CHANNELS.map(c => c.id)
+    expect(ids).not.toContain('douyin')
+    expect(new Set(ids).size).toBe(ids.length)
+  })
+
+  it('每条渠道都有名字和说明', () => {
+    for (const c of SALES_CHANNELS) {
+      expect(c.name.length).toBeGreaterThan(0)
+      expect(c.note.length).toBeGreaterThan(0)
+    }
+  })
+})
+
+describe('检疫流程参数', () => {
+  it('免疫等待天数与申报提前天数有默认值', () => {
+    expect(DEFAULT_SETTINGS.rabiesWaitDays).toBe(21)
+    expect(DEFAULT_SETTINGS.quarantineLeadDays).toBe(3)
+  })
+
+  // 记录已知的别名陷阱：DEFAULT_DATA.settings 就是 DEFAULT_SETTINGS 本身。
+  // 任何组件把它直接交给 useState 都会让界面状态与模块常量共享引用，
+  // 一次就地 push/改字段就会永久污染常量 —— 必须先 structuredClone。
+  it('DEFAULT_DATA.settings 与 DEFAULT_SETTINGS 是同一个对象（调用方必须先克隆）', () => {
+    expect(DEFAULT_DATA.settings).toBe(DEFAULT_SETTINGS)
+    expect(DEFAULT_DATA.settings.costItems).toBe(BUILTIN_COST_ITEMS)
   })
 })

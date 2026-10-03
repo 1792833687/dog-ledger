@@ -9,11 +9,18 @@ import {
 import { formatMoney } from './money'
 
 function makeBatch(over: Partial<Batch> = {}): Batch {
-  return { id: 'b1', name: '10月3日一批', date: '2026-10-03', source: '农户', note: '', status: 'active', ...over }
+  return {
+    id: 'b1', name: '10月3日一批', date: '2026-10-03', source: '农户', note: '',
+    status: 'active', plannedChannel: 'undecided', ...over,
+  }
 }
 
 function makeDog(id: string, status: Dog['status'], over: Partial<Dog> = {}): Dog {
-  return { id, batchId: 'b1', code: id, breed: '', sex: 'unknown', ageMonths: null, status, note: '', ...over }
+  return {
+    id, batchId: 'b1', code: id, breed: '', sex: 'unknown', ageMonths: null, status, note: '',
+    rabiesVaccinatedOn: null, antibodyTestedOn: null, antibodyReportNo: '',
+    quarantineCertNo: '', quarantineCertIssuedOn: null, quarantineCertValidUntil: null, ...over,
+  }
 }
 
 function entry(over: Partial<LedgerEntry>): LedgerEntry {
