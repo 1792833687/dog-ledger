@@ -31,6 +31,10 @@ export interface Settings {
   targetMarginRate: number
   /** 预估死亡率默认值，用于决策台 */
   expectedMortalityRate: number
+  /** 每只狗的检疫费默认值（狂犬病免疫抗体检测 + 检疫申报跑腿），用于决策台预填 */
+  quarantinePerDog: Money
+  /** 每只病死犬的无害化处理费默认值，用于决策台预填 */
+  disposalPerDog: Money
   /** 上次备份时间，ISO datetime；从未备份为 null */
   lastBackupAt: string | null
 }
@@ -84,6 +88,13 @@ export const BUILTIN_COST_ITEMS: CostItemDef[] = [
   { id: 'purchase', name: '收购价', scope: 'dog', isBuiltin: true },
   { id: 'transport', name: '运输+笼具', scope: 'batch', isBuiltin: true },
   { id: 'medical', name: '疫苗驱虫医疗', scope: 'dog', isBuiltin: true },
+  // 检疫是法定前置：没有《动物检疫合格证明》就出售，按《动物防疫法》第二十九条、
+  // 第九十七条处罚（没收 + 货值 15~30 倍罚款，货值不足一万的处 5 万~15 万，负责人 5 年禁业）。
+  // 这不是「可选的合规开销」，是算保本价时必须计入的现金流出。
+  { id: 'quarantine', name: '检疫（抗体检测+申报）', scope: 'dog', isBuiltin: true },
+  // 病死犬必须无害化处理，不得买卖、加工、随意弃置（《动物防疫法》第五十七条第三款）。
+  // 这是真金白银的额外支出，与「损耗摊薄」那种账面重分配性质不同。
+  { id: 'disposal', name: '病死犬无害化处理', scope: 'batch', isBuiltin: true },
   { id: 'aftercare_refund', name: '售后退款', scope: 'dog', isBuiltin: true },
 ]
 
@@ -95,6 +106,10 @@ export const DEFAULT_SETTINGS: Settings = {
   costItems: BUILTIN_COST_ITEMS,
   targetMarginRate: 0.3,
   expectedMortalityRate: 0.15,
+  // 默认 0 = 「还不知道」。绝不许编一个看起来合理的数字：
+  // 检疫费各地不同、抗体检测价格未知，填 0 至少是诚实的，编 50 元会让人以为算过了。
+  quarantinePerDog: 0,
+  disposalPerDog: 0,
   lastBackupAt: null,
 }
 
