@@ -60,19 +60,24 @@ export function setDogStatus(data: AppData, dogId: string, status: DogStatus): A
 }
 
 /**
- * 把一只在库的狗标成死亡。
+ * 把一只狗标成死亡。
  *
- * 守卫（实机走查抓到的账目污染）：只有 `in_stock` 的狗能被标死亡。
- * 一只**已售**的狗如果被标成 death，那笔 `income/sale` 流水会留在账上一动不动，
- * 而它的购置成本从此计入「死亡损耗」—— 批次盈亏直接算错（见 `costing.ts:38` 的 `deadLoss`）。
+ * 守卫：能记死亡的 = **还站在我们笼子里的活狗**，即 `in_stock` **或 `returned`**。
  *
- * 所以这里对已售 / 已死 / 已退回的狗一律原样返回 `data`（同一引用），
- * 界面层也不会给这些状态渲染「死亡」按钮。要纠错（比如死亡记错了），
+ * - `sold`：收入已经入账、狗已经不在我们账上，它的死不是我们的损失。实机走查抓到的
+ *   账目污染就是这一格 —— 把 `sold` 覆盖成 `dead` 之后那笔 `income/sale` 流水留在账上
+ *   一动不动，而购置成本却进了「死亡损耗」（`costing.ts:38`），批次盈亏直接算错。
+ * - `dead`：不重复记。
+ * - `returned`：**必须允许**。设计文档 :156 把退回的狗算进 `inStockCount`、:157 算进
+ *   `aliveCount` —— 它又站在笼子里了，会病会死，一样要摊它的购置成本。早先按
+ *   `!== 'in_stock'` 收口会把它一起堵死，与 156/157 的口径自相矛盾。
+ *
+ * 不符合条件的狗一律原样返回 `data`（同一引用）。要纠错（比如死亡记错了），
  * 走 `setDogStatus(data, dogId, 'in_stock')` —— 那个函数故意不设守卫。
  */
 export function markDogDead(data: AppData, dogId: string): AppData {
   const dog = data.dogs.find(d => d.id === dogId)
-  if (!dog || dog.status !== 'in_stock') return data
+  if (!dog || (dog.status !== 'in_stock' && dog.status !== 'returned')) return data
   return setDogStatus(data, dogId, 'dead')
 }
 

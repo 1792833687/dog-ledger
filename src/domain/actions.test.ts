@@ -155,7 +155,7 @@ describe('setDogStatus / markDogDead', () => {
   })
 })
 
-describe('markDogDead 的守卫（已售 / 已死的狗不许再标死亡）', () => {
+describe('markDogDead 的守卫（只挡「收入已入账」的已售狗与已记过的已死狗，不挡退回的狗）', () => {
   it('对已售的狗调 markDogDead：原样返回同一引用，状态仍是 sold', () => {
     // 这是实机走查抓到的账目污染：把 sold 覆盖成 dead 之后，
     // 那笔 income/sale 流水留在账上一动不动，狗的购置成本却进了「死亡损耗」，
@@ -175,11 +175,29 @@ describe('markDogDead 的守卫（已售 / 已死的狗不许再标死亡）', (
     expect(markDogDead(dead, dogId)).toBe(dead)
   })
 
-  it('对退回的狗也不标死亡', () => {
+  /**
+   * 退回的狗是「在册的活狗」：设计文档 :156 把它算进 `inStockCount`、:157 算进 `aliveCount`。
+   * 它站在笼子里，所以会病、会死、也要再卖一次。守卫真正要挡的是
+   * 「收入已入账、狗已经不在我们账上」（`sold`）和「已经记过死亡」（`dead`），
+   * 而不是「不是 `in_stock`」—— 后者会把退回的狗一起堵死。
+   */
+  it('对退回的狗能标死亡：状态变 dead', () => {
     const data = sellSeed()
     const dogId = data.dogs[0].id
     const returned = setDogStatus(data, dogId, 'returned')
-    expect(markDogDead(returned, dogId)).toBe(returned)
+    const next = markDogDead(returned, dogId)
+    expect(next).not.toBe(returned)
+    expect(next.dogs.find(d => d.id === dogId)!.status).toBe('dead')
+  })
+
+  it('退回后再死亡：购置成本照样进死亡损耗（退回不等于免于损耗）', () => {
+    const data = sellSeed()
+    const batchId = data.batches[0].id
+    const dogId = data.dogs[0].id
+    const own = dogOwnCost(data, dogId)
+    expect(own).toBe(60000 + 8000)
+    const dead = markDogDead(setDogStatus(data, dogId, 'returned'), dogId)
+    expect(batchSummary(dead, batchId).deadLoss).toBe(own)
   })
 
   it('对不存在的狗原样返回', () => {
@@ -187,12 +205,38 @@ describe('markDogDead 的守卫（已售 / 已死的狗不许再标死亡）', (
     expect(markDogDead(data, '没有这只')).toBe(data)
   })
 
-  it('但在库的狗仍然能标死亡（守卫没有把正常路径一起堵掉）', () => {
+  it('在库的狗仍然能标死亡（回归：守卫没有把正常路径一起堵掉）', () => {
     const data = sellSeed()
     const dogId = data.dogs[0].id
     const next = markDogDead(data, dogId)
     expect(next).not.toBe(data)
     expect(next.dogs.find(d => d.id === dogId)!.status).toBe('dead')
+  })
+})
+
+describe('退回的狗要能再卖一次（设计文档 :156「退狗回到在库」）', () => {
+  it('returned 的狗 sellDog 成功：状态变 sold', () => {
+    const data = sellSeed()
+    const dogId = data.dogs[0].id
+    const returned = setDogStatus(data, dogId, 'returned')
+    const next = sellDog(returned, dogId, 100000, '2026-10-08')
+    expect(next.dogs.find(d => d.id === dogId)!.status).toBe('sold')
+    expect(next).not.toBe(returned)
+  })
+
+  it('再次卖出写入第二笔 income/sale（上一笔退款不作废）', () => {
+    const data = sellSeed()
+    const batchId = data.batches[0].id
+    const dogId = data.dogs[0].id
+    const first = sellDog(data, dogId, 120000, '2026-10-05')
+    const refunded = addExpense(first, {
+      batchId, dogId, category: 'aftercare_refund',
+      amount: 120000, paidBy: 'pool', date: '2026-10-06', note: '',
+    })
+    const again = sellDog(setDogStatus(refunded, dogId, 'returned'), dogId, 110000, '2026-10-08')
+    const sales = again.entries.filter(e => e.type === 'income' && e.dogId === dogId)
+    expect(sales).toHaveLength(2)
+    expect(dogIncome(again, dogId)).toBe(120000 + 110000)
   })
 })
 

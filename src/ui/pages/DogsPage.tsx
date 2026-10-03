@@ -6,6 +6,7 @@ import { formatMoney, parseMoney } from '../../domain/money'
 import { newId } from '../../domain/types'
 import { Modal } from '../components/Modal'
 import { todayLocalIso } from '../planForm'
+import { isOnHand, refundedCurrentSale } from '../dogLedger'
 
 /**
  * 「狗」页面 —— 批次台账。
@@ -160,16 +161,6 @@ export function DogsPage() {
   const summary = batchSummary(data, batch.id)
   const dogs = dogsOfBatch(data, batch.id)
 
-  // 已经记过退款的狗 id。用来把「退狗 / 钱退了狗没回来」两个按钮收掉：
-  // 这两个动作都是「加一笔支出」，重复点会重复扣钱，而它们不像卖出那样
-  // 能被状态挡住（钱退了狗没回来时状态本来就一直是 sold）。
-  const refundedDogIds = new Set(
-    data.entries
-      .filter(e => e.type === 'expense' && e.category === 'aftercare_refund')
-      .map(e => e.dogId)
-      .filter((id): id is string => id !== null),
-  )
-
   return (
     <div className="px-4 pb-6 pt-6">
       <button type="button" className="text-sm text-gray-500" onClick={() => setOpenBatchId(null)}>
@@ -206,15 +197,26 @@ export function DogsPage() {
           const income = dogIncome(data, d.id)
           const cost = dilutedCostFen(data, d.id)
           const profit = dogProfitFen(data, d.id)
+          const onHand = isOnHand(d)
+          // 两个退款按钮的显示条件。「钱退了，狗没回来」之后状态一直是 sold，
+          // 没有任何东西挡得住第二次点击，所以必须靠这个把按钮收掉 —— 否则重复点就重复扣钱。
+          const refunded = refundedCurrentSale(data.entries, d.id)
           return (
             <li key={d.id} className="rounded-xl bg-white p-3 shadow-sm">
               <div className="flex items-baseline justify-between">
                 <span className="font-semibold">{d.code}</span>
-                <span className="text-xs text-gray-500">{STATUS_LABEL[d.status]}</span>
+                <span className="text-xs text-gray-500">
+                  {STATUS_LABEL[d.status]}
+                  {/* 退回的狗又站在笼子里了（设计文档 :156），不提示的话用户会以为
+                      这只已经卖出去的狗和自己无关，也不会去点「卖出」。 */}
+                  {d.status === 'returned' && <span className="ml-1 text-amber-600">· 回到在库，可再卖一次</span>}
+                </span>
               </div>
               <div className="mt-1 text-xs text-gray-500">
                 摊薄成本 {formatMoney(cost)}
-                {d.status === 'sold' && (
+                {/* 用「有没有卖出收入」而不是 status === 'sold' 判：退回的狗也卖过一次，
+                    那笔收入还在账上，不显示的话这张卡看着像从没卖过。 */}
+                {income > 0 && (
                   <> · 售价 {formatMoney(income)} ·{' '}
                     <span className={profit >= 0 ? 'text-emerald-600' : 'text-red-500'}>
                       {profit >= 0 ? '赚' : '亏'} {formatMoney(Math.abs(profit))}
@@ -223,7 +225,7 @@ export function DogsPage() {
                 )}
               </div>
               <div className="mt-2 flex flex-wrap gap-2 text-xs">
-                {d.status === 'in_stock' && (
+                {onHand && (
                   <button
                     type="button"
                     className="rounded-md bg-emerald-600 px-3 py-1 text-white"
@@ -232,9 +234,11 @@ export function DogsPage() {
                     卖出
                   </button>
                 )}
-                {/* 只有还在库的狗能标死亡。已售的狗标死亡会把 sold 覆盖成 dead，
-                    而收入流水留在账上，批次盈亏从此是错的（markDogDead 里也有守卫兜底）。 */}
-                {d.status === 'in_stock' && (
+                {/* 「卖出」与「死亡」都在 isOnHand 里：在库 + 退回。
+                    退回的狗是站在笼子里的活狗（设计文档 :156/:157），要能再卖一次、也会死。
+                    已售的狗标死亡会把 sold 覆盖成 dead，而收入流水留在账上，
+                    批次盈亏从此是错的（markDogDead 里也有守卫兜底）。 */}
+                {onHand && (
                   <button
                     type="button"
                     className="rounded-md bg-gray-100 px-3 py-1 text-gray-600"
@@ -243,7 +247,7 @@ export function DogsPage() {
                     死亡
                   </button>
                 )}
-                {d.status === 'sold' && !refundedDogIds.has(d.id) && (
+                {d.status === 'sold' && !refunded && (
                   <button
                     type="button"
                     className="rounded-md bg-gray-100 px-3 py-1 text-gray-600"
@@ -254,7 +258,7 @@ export function DogsPage() {
                     退狗
                   </button>
                 )}
-                {d.status === 'sold' && !refundedDogIds.has(d.id) && (
+                {d.status === 'sold' && !refunded && (
                   <button
                     type="button"
                     className="rounded-md bg-gray-100 px-3 py-1 text-gray-600"
@@ -265,7 +269,7 @@ export function DogsPage() {
                     钱退了，狗没回来
                   </button>
                 )}
-                {d.status === 'sold' && refundedDogIds.has(d.id) && (
+                {d.status === 'sold' && refunded && (
                   <span className="self-center text-gray-400">已记退款</span>
                 )}
                 {/* 纠错入口。死 / 退回都只是记一笔状态，记错了必须能改回来——
