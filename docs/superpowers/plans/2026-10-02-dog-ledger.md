@@ -1756,6 +1756,12 @@ git commit -m "feat(storage): IndexedDB 存储与备份导入导出"
 
 ### Task 8: 应用骨架（状态容器 + 底部标签栏；先做算/狗/钱/报四个，「检」由 Task 17 接入）
 
+> **【已完成，本节以下内容与实际代码有出入，后续任务以实际代码为准】**
+> Task 8 实际落地时有两处与本节的代码片段不同（都已提交，见 `7fed6e9` 与 `1a137fd`）：
+> 1. **`useAppData` 不在 `AppDataContext.tsx` 里**，而在 **`src/state/useAppData.ts`**（该文件还导出 `AppDataContext` 与 `AppDataContextValue`）。`src/state/AppDataContext.tsx` 只导出 `AppDataProvider`。原因：oxlint 的 `react(only-export-components)` 要求「只导出组件的文件」才有 Fast Refresh。**所有页面一律 `import { useAppData } from '../../state/useAppData'`。**
+> 2. **标签注册表抽成了 `src/ui/tabs.ts`** 的单一数组（`TabKey` / `TabDef` / `TABS` / `DEFAULT_TAB`），`src/App.tsx` 用 `TABS.find(...)` 取当前页，不再有四个硬编码分支。加标签只改 `tabs.ts`。
+> 另外多出两个本节没列的文件：`src/state/persistence.ts`（唯一存储访问出口）与它和 `tabs.ts` 的测试。
+
 **Files:**
 - Create: `src/state/AppDataContext.tsx`
 - Create: `src/ui/TabBar.tsx`
@@ -2025,7 +2031,7 @@ export function Field({
 
 ```tsx
 import { useMemo, useState } from 'react'
-import { useAppData } from '../../state/AppDataContext'
+import { useAppData } from '../../state/useAppData'
 import { plan, createBatchFromPlan, type PlanInput } from '../../domain/planning'
 import { formatMoney, fenToYuan, parseMoney } from '../../domain/money'
 import { Field } from '../components/Field'
@@ -2419,7 +2425,7 @@ export function Modal({
 
 ```tsx
 import { useState } from 'react'
-import { useAppData } from '../../state/AppDataContext'
+import { useAppData } from '../../state/useAppData'
 import { batchSummary, dogsOfBatch, dilutedCostFen, dogIncome, dogProfitFen } from '../../domain/costing'
 import { sellDog, markDogDead, setDogStatus, createBatch, addExpense } from '../../domain/actions'
 import { formatMoney, parseMoney } from '../../domain/money'
@@ -2841,7 +2847,7 @@ Expected: 全部 passed
 
 ```tsx
 import { useState } from 'react'
-import { useAppData } from '../../state/AppDataContext'
+import { useAppData } from '../../state/useAppData'
 import { poolBalance, advanceBalance } from '../../domain/ledger'
 import { addExpense, addInjection, addIncome, addReimbursement, addDistribution } from '../../domain/actions'
 import { formatMoney, parseMoney } from '../../domain/money'
@@ -3213,7 +3219,7 @@ Expected: 3 passed
 
 ```tsx
 import { useMemo, useState } from 'react'
-import { useAppData } from '../../state/AppDataContext'
+import { useAppData } from '../../state/useAppData'
 import { settle } from '../../domain/settlement'
 import { batchSummary } from '../../domain/costing'
 import { formatMoney } from '../../domain/money'
@@ -3477,7 +3483,7 @@ Expected: 全部 passed
 
 ```tsx
 import { useState } from 'react'
-import { useAppData } from '../../state/AppDataContext'
+import { useAppData } from '../../state/useAppData'
 import { updateSettings, renamePartner, setPartnerRatio, addCostItem } from '../../domain/actions'
 import { validateSettings } from '../../domain/settlement'
 import { fenToYuan, parseMoney } from '../../domain/money'
@@ -4050,7 +4056,7 @@ Expected: 7 passed
 创建 `src/ui/components/BackupBanner.tsx`：
 
 ```tsx
-import { useAppData } from '../../state/AppDataContext'
+import { useAppData } from '../../state/useAppData'
 import { daysSinceBackup, shouldWarnBackup } from '../backupStatus'
 
 export function BackupBanner({ onGoToBackup }: { onGoToBackup: () => void }) {
@@ -4078,7 +4084,7 @@ export function BackupBanner({ onGoToBackup }: { onGoToBackup: () => void }) {
 
 ```tsx
 import { useRef, useState } from 'react'
-import { useAppData } from '../../state/AppDataContext'
+import { useAppData } from '../../state/useAppData'
 import { exportBackup, importBackup } from '../../storage/backup'
 import { daysSinceBackup } from '../backupStatus'
 import { Modal } from '../components/Modal'
