@@ -4041,6 +4041,7 @@ export function compareChannels(data: AppData, batchId: string, inputs: ChannelI
 
 1. 页面顶部是批次选择器，默认选中**最近创建的批次**（`createdAt` 最大者）。没有批次时显示空状态：「先去「算」页面建一个批次。」
 2. **每只在库的狗（`in_stock` / `returned`）一张卡片**（见 `## Global Constraints` 里「还在我们账上的狗（在库）」那一条）——已售与已死的狗不出现在这一页，它们没有当下阶段可言，摆在上面只会把「还要准备什么」这件事搅浑。卡片显示：编号、`status.label`、`status.nextAction`、`waiting_antibody` 时的「还要等 N 天」（用 `daysUntilTestable`）、检疫证明编号、证明有效期、以及 `certExpiresIn` 的天数（负值显示「已过期 N 天」）。`returned` 的狗额外打一个「退回」标记，让人知道它为什么又回到清单上。
+   - **额外一条中性提示**（2026-10-03 裁定后的新增场景）：当 `dog.rabiesVaccinatedOn === null` **且** `status.stage === 'certified'` 时，卡上再显示一行灰字「接种日期未记录（不影响出售，但能补就补上）」。这只狗确实可以卖（证明就够了），提示只是让你知道台账少了一格。**判据写在界面侧，不要给 `QuarantineStatus` 加字段、不要改它的形状。**
 3. 卡片默认**折叠**，只露出阶段标签 + 一个快捷动作按钮；展开后是 6 个字段的编辑表单：
    - `rabiesVaccinatedOn` / `antibodyTestedOn` / `quarantineCertIssuedOn` / `quarantineCertValidUntil`：`<input type="date">`
    - `antibodyReportNo` / `quarantineCertNo`：文本输入
