@@ -4015,9 +4015,27 @@ export function compareChannels(data: AppData, batchId: string, inputs: ChannelI
 - Modify: `src/ui/tabs.ts`（在 `TABS` 数组的「狗」与「钱」之间插入第 5 项「检」，`key: 'quarantine'`）
   - 注意：**不要改 `src/App.tsx`**。Task 8 实际实现时把标签注册表抽成了单一数组 `src/ui/tabs.ts`，`App.tsx` 从 `TABS` 里取当前页，加标签只动这一处。
   - `TabKey` 联合类型也要同步加上 `'quarantine'`，否则 `tabs.ts` 自己编译不过。
+  - `src/ui/tabs.test.ts` 里断言标签数量/顺序的用例会因此变红，**改它**（新顺序：算 / 狗 / 检 / 钱 / 报）。
+- **Modify: `src/domain/actions.ts`（只允许在文件末尾追加，已有函数一字不许动）+ `src/domain/actions.test.ts`**
+  - **这是任务书原来漏掉的**：这一页要能改 6 个检疫字段，而全仓改 `AppData` 的唯一入口是 `src/domain/actions.ts`（界面不许自己拼新对象）。所以必须补一个 action，签名逐字如下：
+    ```ts
+    export interface DogQuarantinePatch {
+      rabiesVaccinatedOn?: string | null
+      antibodyTestedOn?: string | null
+      antibodyReportNo?: string
+      quarantineCertNo?: string
+      quarantineCertIssuedOn?: string | null
+      quarantineCertValidUntil?: string | null
+    }
+
+    /** 改某一只狗的检疫字段。只改传进来的键，其余字段与别的狗一律不动。找不到这只狗时原样返回。 */
+    export function setDogQuarantine(data: AppData, dogId: string, patch: DogQuarantinePatch): AppData
+    ```
+  - 语义要求：①`patch` 里**没传的键**保持原值（`undefined` 不等于「清空」——清空要显式传 `null` 或 `''`）；②只改 `dogId` 那一只；③狗不存在时返回**同一个引用**（与 `markDogDead` 的守卫风格一致）；④不碰 `entries`、不碰 `batches`；⑤数组顺序不变。
+  - 追加时保留第 2 行的 `import { newId } from './types'`（若本 action 用不到 `newId`，**不要**为了「看起来整洁」去删这一行——它是别的函数在用的）。
 - 需要的子组件自行决定（例如 `src/ui/components/DogQuarantineCard.tsx`）
 
-**Consumes:** `quarantineStatus` / `isSellable` / `preSaleChecklist` / `addDays`（`src/domain/quarantine.ts`，Task 15）；`AppData` / `SALES_CHANNELS`（types.ts）；Task 8 建立的状态容器与保存入口。
+**Consumes:** `quarantineStatus` / `isSellable` / `preSaleChecklist` / `addDays`（`src/domain/quarantine.ts`，Task 15）；**`setDogQuarantine` / `DogQuarantinePatch`（`src/domain/actions.ts`，本任务自己补）**；`AppData` / `SALES_CHANNELS`（types.ts）；Task 8 建立的状态容器与保存入口。
 
 **必须满足的行为:**
 
@@ -4050,12 +4068,12 @@ export function compareChannels(data: AppData, batchId: string, inputs: ChannelI
 **Steps:**
 - [ ] **Step 0**：read `src/App.tsx` 与 Task 8/10 产出的页面，确认导航与状态容器的写法；read `src/domain/quarantine.ts` 确认实际签名。
 - [ ] **Step 1**：实现页面与导航。
-- [ ] **Step 2**：`npx vitest run`（本任务不加 domain 测试，应仍全绿）、`npm run build`、`npm run lint`。
+- [ ] **Step 2**：`npx vitest run`（`setDogQuarantine` 要有测试，所以**不再**是「不加测试」；其余应仍全绿）、`npm run build`、`npm run lint`。
 - [ ] **Step 3**：`npm run dev` 手动验证（这是本任务的主要验收方式）：建一个批次 → 收 3 只狗 → 「检」页面应显示 3 只未接种 → 点「今天已接种」→ 变「等待抗体检测期」并显示还要等 N 天 → **把接种日期直接改成 30 天前**（注意：此时还没有设置面板——`SettingsPanel` 是 Task 13、设置校验是 Task 19，都在本任务之后。所以**不要**按原来的写法去「把设置里的等待天数改成 0」，界面上根本没有这个入口，去 IndexedDB 里改设置属于绕路）→ 变「可以送检」→ 点「今天已送检」→ 变「待申报检疫」→ 填证明编号与有效期 → 变「可出售」，底部变绿色确认块 → 把有效期改成昨天 → 变「检疫证明已过期」，底部警告块列出它。
       - 顺带验一条 2026-10-03 裁定后的行为：**把某只狗的接种日期清空、只留证明编号与未来的有效期** → 它应当**仍是「可出售」**，而不是跳回「未接种狂犬疫苗」（见「必须满足的行为」第 1 条的次序裁定）。
 - [ ] **Step 4**：提交（**只能用显式路径**，禁止 `git add src` / `-A` / `.`）：
   ```bash
-  git add src/ui/pages/QuarantinePage.tsx src/ui/tabs.ts
+  git add src/ui/pages/QuarantinePage.tsx src/ui/tabs.ts src/ui/tabs.test.ts src/domain/actions.ts src/domain/actions.test.ts
   git commit -m "feat(ui): 检疫页面与出栏前检查清单"
   ```
 
