@@ -21,6 +21,12 @@
 - **检疫证明是出售的硬门槛**：`isSellable()` 只在 `certified` 阶段返回 `true`。依据见 `docs/compliance/2026-10-02-犬只交易合规要点-法规篇.md`——一证多用（数量超出证载明部分、种类不符、使用转让的证明）按「未经检疫」处理，落进货值 15~30 倍罚款那一档，负责人 5 年禁业。
 - **`domain/` 里任何函数都不得调用 `new Date()`**：需要"今天"时一律由调用方把 `today: string`（`'YYYY-MM-DD'`）作为参数传进来。这让检疫阶段推导可测试，也避免"过期"的判定在不同时区下静默漂移。
 - **UI 层要"今天"，用 `todayLocalIso(new Date())`（`src/ui/planForm.ts`），绝不要 `new Date().toISOString().slice(0, 10)`。** 后者是 UTC，东八区晚上 8 点后返回的是昨天——"今天卖的狗"会被记在昨天，检疫的"有效期到哪天"也会跟着错一天。页面里统一 `import { todayLocalIso } from '../planForm'`。
+- **UI 层不能在渲染体里调 `new Date()`；实测唯一能过 lint 的写法是 `useState` 的惰性初始化。** 本仓门禁是 `npm run lint` 0 warning，而 `react(purity)` 会拦下渲染体里的 `new Date()`。四种写法已用 `npx oxlint`（116 rules）逐一实测：
+  - ✗ `const today = todayLocalIso(new Date())` → `react(purity): Cannot call impure function during render`
+  - ✗ `const today = useMemo(() => todayLocalIso(new Date()), [])` → 同一条规则，同样拦下
+  - ✗ `useEffect(() => { setToday(todayLocalIso(new Date())) }, [])` → `react(set-state-in-effect): Calling setState synchronously within an effect`
+  - ✓ **`const [today] = useState(() => todayLocalIso(new Date()))`** —— 只算一次，渲染期不调 `new Date()`
+  如果"今天"只在事件处理器里用得到（Task 10 的建批次、Task 11 的记账、Task 12 的导出），也可以包成一个函数 `function todayIso() { return todayLocalIso(new Date()) }` 在处理器里调用（`src/ui/pages/DogsPage.tsx:30-34` 就是这么做的）。**关键是不要在渲染体里求值。**
 - 数据模型以 `docs/superpowers/specs/2026-10-02-dog-trading-ledger-design.md` 为准。
 - 单测命令：`npx vitest run`；单文件：`npx vitest run <文件路径>`。
 - 测试环境为 `node`（领域层是纯函数，不需要 jsdom）。
@@ -2212,6 +2218,16 @@ git commit -m "feat(ui): 决策台页面"
 > 4. `paidBy: 'pool'` 是故意的：批次页只记池子直付，合伙人垫付去「钱」页面（Task 11）。别在这里加垫付下拉。
 > 5. 今天这个仓库的测试文件必须显式 `import { describe, it, expect } from 'vitest'`，否则 `tsc -b` 报 TS2593 而 vitest 仍是绿的。
 
+> **【控制器实机走查结果（CDP + 真实 IndexedDB）：Task 10 返工清单】**
+> 第一版实现（`2a7cb1f`）的**基本流程是通的**——实机走完：建批次 → 批次详情显示「去向：未定」→ 补录 3 只狗 → 记一笔 ¥400 支出（总成本 ¥400）→ 卖出一只 ¥1200（已收款 ¥1,200、显示「售价 ¥1,200 · 赚 ¥1,066.67」）→ 刷新后数据都在、不卡在「正在载入」。非法金额（`abc`、`1200元`）会显示中文错误并让提交按钮变灰，且**点下去确实没写账**（流水数不变）。但实机点出下面四条：
+> 1. **已售的狗还能被标成死亡（账目被污染）** —— `DogsPage.tsx:200` 的条件是 `d.status !== 'dead'`，所以「已售」的卡上同时出现「死亡」和「退狗」。实测点「死亡」把 `sold` 覆盖成 `dead`，而那笔 `income/sale` 流水留在账上一动不动 → 那只狗的购置成本从此计入「死亡损耗」，收入却还挂着，**批次盈亏直接是错的**。又因为 `dead` 的卡上一个按钮都没有，**点错了在界面里再也改不回来**。
+>    修法（两处都要）：`src/domain/actions.ts` 的 `markDogDead` 加守卫——`const dog = data.dogs.find(d => d.id === dogId); if (!dog || dog.status !== 'in_stock') return data`；界面把条件改成 `d.status === 'in_stock'`。在 `actions.test.ts` 里补「对已售的狗调 `markDogDead` 返回原数据不变」的用例。
+> 2. **退狗没有记退款支出（违反设计文档）** —— 设计文档 §3.4 第 225 行与 §6 第 362 行都写明：`returned` 的记账 = 狗回到在库（计入 `inStockCount` 与 `aliveCount`）+ 已发生的医疗成本不冲销 + **另记一笔 `expense`（类别「售后退款」，金额 = 退回给客户的款）关联到该狗**。而 `DogsPage.tsx:213` 只调了 `setDogStatus(x, d.id, 'returned')`，**退回给客户的那笔钱根本没进账**，账上会显示一笔根本没赚到的利润。
+>    修法：点「退狗」弹 Modal 问「退回给客户多少钱」→ 确认后同时 `setDogStatus(..., 'returned')` **和** `addExpense({ batchId, dogId: d.id, category: 'aftercare_refund', amount, paidBy: 'pool', date: todayIso(), note })`（`aftercare_refund`「售后退款」是 `src/domain/types.ts:163` 的内置项）。设计文档还要第二种情况——**钱退了但狗没要回来** → 状态保持 `sold`、只记退款支出，所以再加一个按钮「钱退了，狗没回来」走同一个 Modal 但只记支出、不改状态。
+> 3. **死亡 / 退回的狗要有纠错入口** —— 设计文档 §4 第 308 行写的是「状态点一下即改」，现在 `dead` 是单向陷阱（一个按钮都不剩），不符合这条。给 `dead` 加「记错了，改回在库」→ `setDogStatus(..., 'in_stock')`；给 `returned` 加「狗又要回来了」→ 改回 `in_stock`。
+> 4. **`new Date()` 不许出现在渲染体里** —— 实测照抄原 Step 6 会让 `npm run lint` 变红：`react(purity): Cannot call impure function during render`（`src/ui/pages/DogsPage.tsx`）。第一版的做法是对的、**后续任务照抄**：包成 `todayIso()`（`DogsPage.tsx:30-34`），只在 onClick / 事件处理器里调用。（`CalculatePage.tsx:45` 里同一句不报错，因为它在 `handleCreateBatch()` 里。**这是过不过门禁的问题，不是风格问题。**）
+>    **本任务的 Step 6 片段已按此改写**：`const [today] = useState(() => todayLocalIso(new Date()))`。四种写法的实测对比见 `## Global Constraints` 最后那条——`useMemo` 和 `useEffect` 都会被 lint 拦下，**只有 `useState` 惰性初始化能过**。
+
 **Files:**
 - Modify: `src/ui/pages/DogsPage.tsx`（整体替换）
 - Create: `src/ui/components/Modal.tsx`
@@ -2492,7 +2508,7 @@ export function DogsPage() {
   const [newBatchName, setNewBatchName] = useState('')
 
   // 本机时区的今天。不要用 toISOString()——那是 UTC，东八区晚上 8 点后返回昨天。
-  const today = todayLocalIso(new Date())
+  const [today] = useState(() => todayLocalIso(new Date()))
 
   if (!openBatchId) {
     return (
@@ -2771,6 +2787,13 @@ git commit -m "feat: 批次台账页面与领域动作"
 
 ### Task 11: 「钱」页面（资金流水与池子）
 
+> **【控制器审计后已就地修好的三处，照现在的片段写】**
+> 1. **分类名不要硬编码。** 原片段有一张写死的 `CATEGORY_LABEL`（只列了 purchase/transport/medical/aftercare_refund/sale/transfer）。它有两个毛病：漏掉 `quarantine` 与 `disposal` 两个内置成本项，且与「成本项可由用户在设置页自定义」的架构冲突——用户自己加的成本项会以英文 id 直接显示在流水列表里，违反 `## Global Constraints` 的「界面文案用中文」。**现在改成 `NON_COST_CATEGORY` + 一个查设置表的 `catLabel`**，用 `data.settings.costItems.find(c => c.id === id)?.name` 兜底。**不要在实现里退回硬编码表。**
+> 2. **`submit()` 里加了 `partnerId` 空值守卫。** `data.settings.partners` 为空数组时 `partnerId` 初值是 `''`，注资 / 报销 / 分红会记出一笔没有归属的钱。这三种类型在 `partnerId` 为空时直接 return。
+> 3. `const today = todayLocalIso(new Date())` 已改成 **`const [today] = useState(() => todayLocalIso(new Date()))`** —— 渲染体里调 `new Date()` 会被 `react(purity)` 拦下，`useMemo` / `useEffect` 也都不行（见 `## Global Constraints` 最后那条的实测对比）。
+
+> **另外：本任务 Interfaces 的 `Consumes` 声明了 4 个 ledger 函数，而页面只 import 2 个——这不是缺陷**（测试文件确实用到全部 4 个）。不要为了「对齐」去改页面的 import。
+
 **Files:**
 - Modify: `src/ui/pages/MoneyPage.tsx`（整体替换）
 - Modify: `src/domain/actions.ts`（新增 `addInjection`、`addIncome`、`addReimbursement`、`addDistribution`）
@@ -2903,9 +2926,8 @@ import { formatMoney, parseMoney } from '../../domain/money'
 import { Modal } from '../components/Modal'
 import { todayLocalIso } from '../planForm'
 
-const CATEGORY_LABEL: Record<string, string> = {
-  purchase: '收购价', transport: '运输+笼具', medical: '疫苗医疗',
-  aftercare_refund: '售后退款', sale: '收入', transfer: '转账',
+const NON_COST_CATEGORY: Record<string, string> = {
+  sale: '收入', transfer: '转账',
 }
 const TYPE_LABEL: Record<string, string> = {
   injection: '注资', expense: '支出', income: '收入',
@@ -2922,9 +2944,14 @@ export function MoneyPage() {
   const [paidBy, setPaidBy] = useState<'pool' | string>('pool')
 
   // 本机时区的今天（不要用 toISOString()，那是 UTC，东八区晚上会差一天）
-  const today = todayLocalIso(new Date())
+  const [today] = useState(() => todayLocalIso(new Date()))
   const pool = poolBalance(data)
   const recent = [...data.entries].reverse().slice(0, 60)
+
+  // 成本项的名字从设置里查——用户能在设置页自己加成本项，硬编码一张表会漏掉它们，
+  // 也会把 quarantine / disposal 这两个内置项的英文 id 直接显示出来（违反「界面文案用中文」）。
+  const catLabel = (id: string) =>
+    NON_COST_CATEGORY[id] ?? data.settings.costItems.find(c => c.id === id)?.name ?? '其他'
 
   function close() {
     setDialog(null); setAmount(''); setNote('')
@@ -2933,6 +2960,9 @@ export function MoneyPage() {
   function submit() {
     const fen = parseMoney(amount)
     if (fen === null) return
+    // 注资 / 报销 / 分红这三种必须指明是谁的钱。partners 为空时 partnerId 是 ''，
+    // 放任下去会记出一笔无主的钱。
+    if ((dialog === 'injection' || dialog === 'reimbursement' || dialog === 'distribution') && !partnerId) return
     void update(d => {
       switch (dialog) {
         case 'expense': return addExpense(d, { batchId: null, dogId: null, category, amount: fen, paidBy, date: today, note })
@@ -2980,7 +3010,7 @@ export function MoneyPage() {
         {recent.map(e => (
           <li key={e.id} className="flex items-center justify-between px-3 py-2 text-sm">
             <div>
-              <div>{TYPE_LABEL[e.type]} · {CATEGORY_LABEL[e.category] ?? e.category}</div>
+              <div>{TYPE_LABEL[e.type]} · {catLabel(e.category)}</div>
               <div className="text-xs text-gray-400">
                 {e.date}
                 {e.type === 'expense' && e.paidBy !== 'pool'
@@ -3078,6 +3108,13 @@ git commit -m "feat(ui): 资金流水页面与转账类动作"
 ---
 
 ### Task 12: 「报」页面（分账 + 一键对账单图片）
+
+> **【控制器审计后已就地修好的三处，照现在的片段写】**
+> 1. **下载回退抽成了 `downloadBlob`**，修了两个坑：`<a>` 必须 `document.body.appendChild` 之后才会被某些浏览器真正触发（原来没 append）；`URL.revokeObjectURL` 不能在 `a.click()` 后立刻调（会在下载真正开始前把 blob 释放掉），现在推到 `setTimeout(…, 0)`。
+> 2. **`navigator.share` 的 `NotAllowedError` 单独兜住了。** iOS Safari 的 transient user activation 会被前面的 `await receiptToBlob(...)` 消耗掉，`nav.share` 会抛 `NotAllowedError`——这不是「生成失败」，而是应该退回下载并提示「已保存图片，请手动分享到微信」。用户自己关掉分享面板抛的 `AbortError` 则静默处理，不显示任何错误。
+> 3. `drawReceipt` 原来只设了 `canvas.style.width`、**没设 `style.height`**，导出图在版面里会被压扁。已补 `canvas.style.height = `${height}px``。`const today = …` 同样改成 `useState` 惰性初始化。
+
+> **本任务不含「成本结构」与「死亡率趋势」**——设计文档 §4 的「报」页确实列了这两项，它们由 **Task 20** 实现（`src/domain/stats.ts` + 接进本页）。不要以为自己漏抄了。
 
 **Files:**
 - Modify: `src/ui/pages/ReportPage.tsx`（整体替换）
@@ -3209,6 +3246,7 @@ export function drawReceipt(
   canvas.width = width * DPR
   canvas.height = height * DPR
   canvas.style.width = `${width}px`
+  canvas.style.height = `${height}px`
 
   const ctx = canvas.getContext('2d')!
   ctx.scale(DPR, DPR)
@@ -3284,7 +3322,7 @@ export function ReportPage() {
 
   const s = settle(data)
   // 本机时区的今天（不要用 toISOString()，那是 UTC，东八区晚上会差一天）
-  const today = todayLocalIso(new Date())
+  const [today] = useState(() => todayLocalIso(new Date()))
 
   const ranking = useMemo(
     () => data.batches
@@ -3292,6 +3330,19 @@ export function ReportPage() {
       .sort((a, b) => b.summary.netProfitFen - a.summary.netProfitFen),
     [data],
   )
+
+  // 下载回退。两个坑：①<a> 要先进 document 才会被某些浏览器真正触发；
+  // ②立刻 revokeObjectURL 会在下载真正开始前把 blob 释放掉，所以推到下一个 tick。
+  function downloadBlob(blob: Blob, filename: string) {
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = filename
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    setTimeout(() => URL.revokeObjectURL(url), 0)
+  }
 
   async function shareReceipt() {
     setBusy(true)
@@ -3301,14 +3352,22 @@ export function ReportPage() {
       const file = new File([blob], `狗账对账单-${today}.png`, { type: 'image/png' })
       const nav = navigator as Navigator & { canShare?: (d: { files: File[] }) => boolean }
       if (nav.share && nav.canShare?.({ files: [file] })) {
-        await nav.share({ files: [file], title: '狗账对账单' })
+        try {
+          await nav.share({ files: [file], title: '狗账对账单' })
+        } catch (err) {
+          if (err instanceof Error && err.name === 'AbortError') {
+            // 用户自己把分享面板关了，什么都不用做
+          } else if (err instanceof Error && err.name === 'NotAllowedError') {
+            // iOS 上上面的 await receiptToBlob(...) 已经把 transient user activation 用掉了，
+            // navigator.share 会抛 NotAllowedError。这不是生成失败——退回下载，让用户手动分享。
+            downloadBlob(blob, file.name)
+            setMessage('已保存图片，请手动分享到微信')
+          } else {
+            throw err
+          }
+        }
       } else {
-        const url = URL.createObjectURL(blob)
-        const a = document.createElement('a')
-        a.href = url
-        a.download = file.name
-        a.click()
-        URL.revokeObjectURL(url)
+        downloadBlob(blob, file.name)
         setMessage('图片已保存，去相册里发微信')
       }
     } catch (e) {
@@ -3483,11 +3542,13 @@ Expected: FAIL，报 `updateSettings is not a function`
 
 - [ ] **Step 3: 实现**
 
-把 `src/domain/actions.ts` 顶部的类型 import 改成：
+把 `src/domain/actions.ts` **第 1 行**改成：
 
 ```ts
 import type { AppData, Batch, CostItemDef, DogStatus, LedgerEntry, Money, Settings } from './types'
 ```
+
+> **注意：`actions.ts` 第 2 行是独立的值导入 `import { newId } from './types'`，必须原样留着。** 在 `verbatimModuleSyntax` 下它不能并进 `import type` 那一行（`newId` 是值）。`createBatch` 与本任务新增的 `addCostItem` 都要用它。合并或删掉会让 `tsc -b` 报 `TS2304: Cannot find name 'newId'`。
 
 追加到 `src/domain/actions.ts` 末尾：
 
@@ -3539,7 +3600,8 @@ import { useState } from 'react'
 import { useAppData } from '../../state/useAppData'
 import { updateSettings, renamePartner, setPartnerRatio, addCostItem } from '../../domain/actions'
 import { validateSettings } from '../../domain/settlement'
-import { fenToYuan, parseMoney } from '../../domain/money'
+import { parseMoney } from '../../domain/money'
+import { fenToTextInput } from '../planForm'
 import { Field } from '../components/Field'
 
 export function SettingsPanel() {
@@ -3570,6 +3632,8 @@ export function SettingsPanel() {
             value={String(Math.round(p.shareRatio * 100))}
             onChange={e => {
               const pct = Number(e.target.value)
+              // Number('') === 0，不先拦空串的话，清空输入框会把比例悄悄写成 0
+              if (e.target.value.trim() === '') return
               if (!Number.isFinite(pct)) return
               void update(d => setPartnerRatio(d, p.id, pct / 100))
             }}
@@ -3587,6 +3651,8 @@ export function SettingsPanel() {
         inputMode="numeric"
         onChange={v => {
           const pct = Number(v)
+          // Number('') === 0，不先拦空串的话，清空输入框会把这一项悄悄写成 0
+          if (v.trim() === '') return
           if (!Number.isFinite(pct)) return
           void update(d => updateSettings(d, { targetMarginRate: pct / 100 }))
         }}
@@ -3598,15 +3664,18 @@ export function SettingsPanel() {
         inputMode="numeric"
         onChange={v => {
           const pct = Number(v)
+          // Number('') === 0，不先拦空串的话，清空输入框会把这一项悄悄写成 0
+          if (v.trim() === '') return
           if (!Number.isFinite(pct)) return
           void update(d => updateSettings(d, { expectedMortalityRate: Math.min(99, Math.max(0, pct)) / 100 }))
         }}
       />
       <Field
         label="默认每只检疫费"
-        value={String(fenToYuan(s.quarantinePerDog))}
+        value={fenToTextInput(s.quarantinePerDog)}
         suffix="元"
         onChange={v => {
+          if (v.trim() === '') return
           const fen = parseMoney(v)
           if (fen === null) return
           void update(d => updateSettings(d, { quarantinePerDog: fen }))
@@ -3614,9 +3683,10 @@ export function SettingsPanel() {
       />
       <Field
         label="默认每只病死犬处理费"
-        value={String(fenToYuan(s.disposalPerDog))}
+        value={fenToTextInput(s.disposalPerDog)}
         suffix="元"
         onChange={v => {
+          if (v.trim() === '') return
           const fen = parseMoney(v)
           if (fen === null) return
           void update(d => updateSettings(d, { disposalPerDog: fen }))
@@ -3673,7 +3743,7 @@ export function SettingsPanel() {
 
 - [ ] **Step 6: 接线**
 
-在 `src/ui/pages/ReportPage.tsx` 的最后一个 `</section>` 之后、外层 `</div>` 之前加入：
+在 `src/ui/pages/ReportPage.tsx` 的最外层 `<div>` 末尾加入（即在**所有** `<section>` 之后、最后那个 `</div>` 之前）。注意本页排行榜那一段写的是 `{ranking.length > 0 && (<section>…</section>)}`——`</section>` 在 JSX 表达式**内部**，所以落点是紧跟它的 `)}` 之后，不要去 `</section>` 前面插：
 
 ```tsx
       <SettingsPanel />
@@ -3924,10 +3994,13 @@ export function compareChannels(data: AppData, batchId: string, inputs: ChannelI
 5. 页面底部是 `preSaleChecklist` 的结果：
    - 全部可卖 → 绿色确认块：「这批 N 只全部具备有效检疫证明，可以出售。」
    - 有 blocked → 醒目警告块，标题「N 只里有 M 只不能卖」，逐条列出狗编号 + 阶段原因，并固定附一句：「检疫证明与狗不一致（数量超出证明载明部分、种类不符、使用别人的证明）会被按『未经检疫』处理，罚款是货值的 15~30 倍。」
-6. **「今天」从哪来**：页面内部用 `new Date()` 取一次当天并格式化成 `'YYYY-MM-DD'`。**这是 UI 层，允许用 `new Date()`；`domain/` 里不允许**（见 Global Constraints）。必须格式化成局部日期，**不要用 `toISOString()`**（按 UTC 算，晚上会差一天）：
+6. **「今天」从哪来**：页面内部取一次当天并格式化成 `'YYYY-MM-DD'`。**这是 UI 层，允许用 `new Date()`；`domain/` 里不允许**（见 Global Constraints）。用已经写好并测过的 `todayLocalIso`（`src/ui/planForm.ts:47`，内部就是按本机时区拼的），**不要用 `toISOString()`**（按 UTC 算，晚上会差一天）。但这个页面**渲染时就需要 today**（每只狗的阶段判定要用），所以不能用「包成函数、只在处理器里调」的办法——`react(purity)` 会拦下渲染体里的 `new Date()` 和 `useMemo`，`useEffect` + `setToday` 又会被 `react(set-state-in-effect)` 拦下。**实测唯一能过门禁的写法是 `useState` 的惰性初始化**：
    ```ts
-   const d = new Date()
-   const today = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+   import { useState } from 'react'
+   import { todayLocalIso } from '../planForm'
+
+   // 惰性初始化：只算一次，渲染期不调 new Date()。改成 useMemo 或 useEffect 都会让 lint 变红。
+   const [today] = useState(() => todayLocalIso(new Date()))
    ```
 7. 底部导航变成 **5 项：算 / 狗 / 检 / 钱 / 报**，顺序与设计文档 §4 的表一致。
 8. 界面文案全中文。
@@ -4020,6 +4093,42 @@ export function compareChannels(data: AppData, batchId: string, inputs: ChannelI
   git add src
   git commit -m "feat(ui): 设置面板补检疫天数并校验"
   ```
+
+---
+
+### Task 20: 「报」页的成本结构与死亡率趋势
+
+**为什么有这一组任务**：设计文档 §4 的「报」页明确列了「成本结构」与「死亡率趋势」，但 Task 12 只做了分账、对账单图片、批次盈亏排行榜与备份导出。这两项本来就该在「报」页——用户要回答的是「钱到底花在哪了」和「我这批狗是不是死太多了」。控制器在派发前审计时发现**全计划没有任何任务实现它们**，所以补上。**不要把它们塞进 Task 12**，那个任务已经够大。
+
+**Files:**
+- Create: `src/domain/stats.ts`
+- Test: `src/domain/stats.test.ts`
+- Modify: `src/ui/pages/ReportPage.tsx`（在 Task 12 与 Task 14 的产出之后追加一节）
+
+**Interfaces:**
+- Consumes: `AppData`、`LedgerEntry`、`Money`（`src/domain/types.ts`）；`dogsOfBatch`（`src/domain/costing.ts`）
+- Produces（`src/domain/stats.ts`，全部为纯函数）：
+  - `interface CostShare { category: string; name: string; totalFen: Money; share: number }`
+  - `costBreakdown(data: AppData): CostShare[]`
+  - `interface MortalityPoint { batchId: string; name: string; date: string; rate: number; dead: number; total: number }`
+  - `mortalityTrend(data: AppData): MortalityPoint[]`
+
+**必须满足的行为：**
+1. `costBreakdown` **只统计 `type === 'expense'` 的流水**（不要把 `income` 算进去），按 `category` 汇总，返回数组按 `totalFen` **降序**；`share = totalFen / 所有支出之和`；**支出总额为 0 时所有 `share` 都是 0，绝不许出现 NaN**。
+2. `name` 从 `data.settings.costItems.find(c => c.id === category)?.name` 解析，**解析不到时回落 `'其他'`**（用户在设置页删掉某个成本项后，历史流水仍要能显示）。**不要在 `stats.ts` 里另抄一张硬编码的分类表**——Task 11 的「钱」页与 Task 13 的设置页共用同一套可自定义成本项，多抄一张表就会漂移。
+3. `mortalityTrend` 每个批次一条，按 `date` **升序**（老的在前，才看得出趋势）；`total` = 该批次**全部**狗数（含在库/已售/死亡/退回），`dead` = `status === 'dead'` 的只数；`rate = total === 0 ? 0 : dead / total`。
+4. 空数据（没有批次 / 没有流水）返回 `[]`，不抛错、不产生 NaN。
+5. 纯函数：不 import React、不 import storage、**不调用无参 `new Date()`**、不得修改入参。
+6. 界面：在「报」页追加两节——标题「钱花在哪了」列出成本结构（分类名 + 金额 + 占比条），标题「死亡率」列出各批次 `日期 · 批次名 · N 只里死了 M 只（X%）`。两节都无数据时各显示一句「还没有数据」。这一节**只读、不接受任何输入**。如果这一节不需要 today，就**不要**去取今天（渲染期不得调 `new Date()`，见 `## Global Constraints` 最后那条）。
+
+**测试要求**（`src/domain/stats.test.ts`，**新建文件，必须显式 `import { describe, it, expect } from 'vitest'`**）：至少覆盖 —— 两类支出各自汇总正确且按金额降序；只有收入没有支出时 `share` 全为 0 且不出 NaN；自定义成本项的名字能被解析出来、被删掉的成本项回落成「其他」；`mortalityTrend` 按日期升序且 `rate` 数值正确（含 `total === 0` 的分支）；空数据返回 `[]`；函数不修改入参。
+
+**Steps:**
+- [ ] **Step 1**：写 `src/domain/stats.test.ts`（TDD，先跑一次看它失败）。
+- [ ] **Step 2**：实现 `src/domain/stats.ts`，让测试通过。
+- [ ] **Step 3**：接进 `src/ui/pages/ReportPage.tsx`。
+- [ ] **Step 4**：`npx vitest run`、`npm run build`、`npm run lint`（必须 `Found 0 warnings and 0 errors.`）、`git status --short`（必须为空）。
+- [ ] **Step 5**：提交：`git add src && git commit -m "feat(domain): 成本结构与死亡率趋势"`
 
 ---
 
@@ -4149,18 +4258,23 @@ export function BackupPanel() {
   const [message, setMessage] = useState('')
   const [pendingRestore, setPendingRestore] = useState<AppData | null>(null)
 
-  const days = daysSinceBackup(data.settings.lastBackupAt, new Date())
+  // 渲染时就要用 now。不能在渲染体里调 new Date()（react(purity)），
+  // useMemo / useEffect 也都被拦——只有 useState 惰性初始化能过门禁（见 Global Constraints）。
+  const [now] = useState(() => new Date())
+  const days = daysSinceBackup(data.settings.lastBackupAt, now)
 
   function handleExport() {
     const json = exportBackup(data)
     const blob = new Blob([json], { type: 'application/json' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
-    const stamp = new Date().toISOString().slice(0, 10)
+    const stamp = todayLocalIso(new Date())
     a.href = url
     a.download = `狗账备份-${stamp}.json`
+    document.body.appendChild(a)
     a.click()
-    URL.revokeObjectURL(url)
+    a.remove()
+    setTimeout(() => URL.revokeObjectURL(url), 0)
     update(d => ({ ...d, settings: { ...d.settings, lastBackupAt: new Date().toISOString() } }))
     setMessage('已导出。把文件发到微信收藏或存到电脑上。')
   }
@@ -4246,7 +4360,7 @@ export function BackupPanel() {
 
 - [ ] **Step 7: 接线**
 
-在 `src/ui/pages/ReportPage.tsx` 底部（最后一个 `</section>` 之后、外层 `</div>` 之前）加入：
+在 `src/ui/pages/ReportPage.tsx` 底部加入（同 Task 14 Step 7 的落点规则：**所有** `<section>` 之后、最后那个 `</div>` 之前；本页排行榜那段的 `</section>` 在 JSX 表达式内部，落点是在它的 `)}` 之后）：
 
 ```tsx
       <BackupPanel />
