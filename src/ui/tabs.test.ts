@@ -20,4 +20,14 @@ describe('底部标签清单', () => {
     expect(DEFAULT_TAB).toBe('calc')
     expect(TABS.map(t => t.key)).toContain(DEFAULT_TAB)
   })
+
+  /**
+   * 顺序是契约的一部分（设计文档 §4 的表：算 / 狗 / 检 / 钱 / 报）。
+   * 这条断言是 Task 17 加的：原文件只检查了「键唯一、标签非空」，
+   * 把「检」插在别的位置一样能通过——而顺序变了用户的肌肉记忆就废了。
+   */
+  it('顺序固定为 算 / 狗 / 检 / 钱 / 报', () => {
+    expect(TABS.map(t => t.key)).toEqual(['calc', 'dogs', 'quarantine', 'money', 'report'])
+    expect(TABS.map(t => t.label)).toEqual(['算', '狗', '检', '钱', '报'])
+  })
 })

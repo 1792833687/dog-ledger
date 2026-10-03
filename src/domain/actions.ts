@@ -1,4 +1,4 @@
-import type { AppData, Batch, DogStatus, LedgerEntry, Money } from './types'
+import type { AppData, Batch, Dog, DogStatus, LedgerEntry, Money } from './types'
 import { newId } from './types'
 
 /**
@@ -160,4 +160,50 @@ export function addReimbursement(data: AppData, partnerId: string, amount: Money
 /** 池子出钱给某合伙人分红。钱给谁记在 `payee`（`distributedTo` 靠它统计）。 */
 export function addDistribution(data: AppData, partnerId: string, amount: Money, date: string): AppData {
   return transferEntry(data, 'distribution', amount, date, '', { payee: partnerId })
+}
+
+/** 只改这 6 个检疫字段。「没传」与「清空」是两件事，见 `setDogQuarantine` 的说明。 */
+export interface DogQuarantinePatch {
+  rabiesVaccinatedOn?: string | null
+  antibodyTestedOn?: string | null
+  antibodyReportNo?: string
+  quarantineCertNo?: string
+  quarantineCertIssuedOn?: string | null
+  quarantineCertValidUntil?: string | null
+}
+
+/**
+ * `patch` 里没传的键取原值。
+ *
+ * 不能写成 `{ ...dog, ...patch }`：`patch` 的键是可选的，而 TS 的可选属性允许显式传
+ * `undefined`（`{ quarantineCertNo: undefined }` 是合法调用）。展开之后那个字段在运行时
+ * 真的会变成 `undefined`，而它的静态类型仍是 `string` —— 于是 `quarantineStatus` 里那句
+ * `dog.quarantineCertNo.trim()` 就会抛 `Cannot read properties of undefined`。
+ * 更要紧的是账目语义：用户「什么都没改」不能等价于「把这格清空了」。
+ */
+function keepOrSet<T>(next: T | undefined, current: T): T {
+  return next === undefined ? current : next
+}
+
+/**
+ * 改某一只狗的检疫字段。**这是「检」页面唯一的写入口**（界面不许自己拼新 `AppData`）。
+ *
+ * 语义：①只改传进来的键（`undefined` ≠ 清空，清空要显式传 `null` 或 `''`）；
+ * ②只改 `dogId` 那一只，别的狗连对象引用都不换；③找不到这只狗时返回**同一个引用**，
+ * 不凭空造一只没批次的狗；④不碰 `entries` / `batches` / `settings`；⑤数组顺序不变。
+ */
+export function setDogQuarantine(data: AppData, dogId: string, patch: DogQuarantinePatch): AppData {
+  const index = data.dogs.findIndex(d => d.id === dogId)
+  if (index < 0) return data
+  const dog = data.dogs[index]
+  const next: Dog = {
+    ...dog,
+    rabiesVaccinatedOn: keepOrSet(patch.rabiesVaccinatedOn, dog.rabiesVaccinatedOn),
+    antibodyTestedOn: keepOrSet(patch.antibodyTestedOn, dog.antibodyTestedOn),
+    antibodyReportNo: keepOrSet(patch.antibodyReportNo, dog.antibodyReportNo),
+    quarantineCertNo: keepOrSet(patch.quarantineCertNo, dog.quarantineCertNo),
+    quarantineCertIssuedOn: keepOrSet(patch.quarantineCertIssuedOn, dog.quarantineCertIssuedOn),
+    quarantineCertValidUntil: keepOrSet(patch.quarantineCertValidUntil, dog.quarantineCertValidUntil),
+  }
+  return { ...data, dogs: data.dogs.map(d => (d.id === dogId ? next : d)) }
 }

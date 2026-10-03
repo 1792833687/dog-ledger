@@ -2,10 +2,11 @@ import { describe, it, expect } from 'vitest'
 import { DEFAULT_DATA } from './types'
 import {
   setDogStatus, sellDog, markDogDead, addExpense, createBatch,
-  addInjection, addIncome, addReimbursement, addDistribution,
+  addInjection, addIncome, addReimbursement, addDistribution, setDogQuarantine,
 } from './actions'
 import { batchSummary, dogIncome, dogOwnCost, batchTotalCost, dogProfitFen } from './costing'
 import { poolBalance, advanceBalance, contributedCapital, distributedTo } from './ledger'
+import { quarantineStatus } from './quarantine'
 
 /** 建一个批次，并记一笔运输费 */
 function seed() {
@@ -588,5 +589,123 @@ describe('资金类流水与池子的口径', () => {
     const done = addDistribution(withMoney, 'p1', 50000, '2026-10-06')
     expect(distributedTo(done, 'p1')).toBe(50000)
     expect(distributedTo(done, 'p2')).toBe(0)
+  })
+})
+
+/**
+ * Task 17 追加：改单只狗的检疫字段（「检」页面唯一的写入口）。
+ *
+ * 这一组关注的重点是「没传的键不能被碰到」：`undefined` 不等于「清空」。
+ * 检疫字段里有 `quarantineCertNo` 这种域层会直接调 `.trim()` 的字符串，
+ * 一个 `undefined` 混进去不是「少记一格」，而是 `Cannot read properties of undefined`。
+ */
+describe('setDogQuarantine', () => {
+  /** 3 只狗，d1 上有完整的接种 + 检测记录、还没拿证 */
+  function quarantineSeed() {
+    const base = sellSeed()
+    return {
+      ...base,
+      dogs: base.dogs.map(d => (d.id === 'd1'
+        ? {
+          ...d,
+          rabiesVaccinatedOn: '2026-09-11', antibodyTestedOn: '2026-10-02',
+          antibodyReportNo: 'R-1', quarantineCertNo: '',
+          quarantineCertIssuedOn: null, quarantineCertValidUntil: null,
+        }
+        : d)),
+    }
+  }
+
+  it('只改传进来的键，其余检疫字段保持原值', () => {
+    const data = quarantineSeed()
+    const next = setDogQuarantine(data, 'd1', { quarantineCertNo: 'JY-001' })
+    const d1 = next.dogs[0]
+    expect(d1.quarantineCertNo).toBe('JY-001')
+    expect(d1.rabiesVaccinatedOn).toBe('2026-09-11')
+    expect(d1.antibodyTestedOn).toBe('2026-10-02')
+    expect(d1.antibodyReportNo).toBe('R-1')
+    expect(d1.quarantineCertValidUntil).toBeNull()
+  })
+
+  it('显式传 undefined 不算「清空」（没传的键保持原值）', () => {
+    const data = quarantineSeed()
+    const next = setDogQuarantine(data, 'd1', { rabiesVaccinatedOn: undefined, antibodyReportNo: undefined })
+    expect(next.dogs[0].rabiesVaccinatedOn).toBe('2026-09-11')
+    expect(next.dogs[0].antibodyReportNo).toBe('R-1')
+  })
+
+  it('清空要显式传 null（日期）', () => {
+    const data = quarantineSeed()
+    const next = setDogQuarantine(data, 'd1', { antibodyTestedOn: null })
+    expect(next.dogs[0].antibodyTestedOn).toBeNull()
+    expect(next.dogs[0].rabiesVaccinatedOn).toBe('2026-09-11')
+  })
+
+  it('清空要显式传空串（编号）', () => {
+    const data = quarantineSeed()
+    const cleared = setDogQuarantine(data, 'd1', { antibodyReportNo: '' })
+    expect(cleared.dogs[0].antibodyReportNo).toBe('')
+  })
+
+  it('一次传多个键全部生效', () => {
+    const data = quarantineSeed()
+    const next = setDogQuarantine(data, 'd1', {
+      quarantineCertNo: 'JY-002', quarantineCertIssuedOn: '2026-10-03',
+      quarantineCertValidUntil: '2026-10-13', antibodyReportNo: 'R-2',
+    })
+    const d1 = next.dogs[0]
+    expect(d1.quarantineCertNo).toBe('JY-002')
+    expect(d1.quarantineCertIssuedOn).toBe('2026-10-03')
+    expect(d1.quarantineCertValidUntil).toBe('2026-10-13')
+    expect(d1.antibodyReportNo).toBe('R-2')
+  })
+
+  it('同一份补丁里既能清空一个键、也能设置另一个键', () => {
+    const data = quarantineSeed()
+    const next = setDogQuarantine(data, 'd1', { rabiesVaccinatedOn: null, quarantineCertNo: 'JY-9' })
+    expect(next.dogs[0].rabiesVaccinatedOn).toBeNull()
+    expect(next.dogs[0].quarantineCertNo).toBe('JY-9')
+  })
+
+  it('★ 找不到这只狗时返回同一个引用（不凭空造狗）', () => {
+    const data = quarantineSeed()
+    expect(setDogQuarantine(data, '不存在', { quarantineCertNo: 'X' })).toBe(data)
+  })
+
+  it('★ 不碰 entries、不碰 batches', () => {
+    const data = quarantineSeed()
+    const next = setDogQuarantine(data, 'd1', { quarantineCertNo: 'JY-003' })
+    expect(next.entries).toBe(data.entries)
+    expect(next.batches).toBe(data.batches)
+    expect(next.settings).toBe(data.settings)
+  })
+
+  it('★ 只改这一只：别的狗连对象引用都不变，数组顺序不变', () => {
+    const data = quarantineSeed()
+    const next = setDogQuarantine(data, 'd2', { quarantineCertNo: 'JY-004' })
+    expect(next.dogs).toHaveLength(3)
+    expect(next.dogs.map(d => d.id)).toEqual(['d1', 'd2', 'd3'])
+    expect(next.dogs[0]).toBe(data.dogs[0])
+    expect(next.dogs[2]).toBe(data.dogs[2])
+    expect(next.dogs[1]).not.toBe(data.dogs[1])
+    expect(next.dogs[1].quarantineCertNo).toBe('JY-004')
+    expect(next.dogs[0].quarantineCertNo).toBe('')
+  })
+
+  it('不修改传入的 data', () => {
+    const data = quarantineSeed()
+    const before = data.dogs[0].quarantineCertNo
+    setDogQuarantine(data, 'd1', { quarantineCertNo: 'JY-005' })
+    expect(data.dogs[0].quarantineCertNo).toBe(before)
+  })
+
+  it('★ 改完的字段名能被检疫阶段推导直接读懂', () => {
+    const data = quarantineSeed()
+    const next = setDogQuarantine(data, 'd1', {
+      quarantineCertNo: 'JY-006', quarantineCertValidUntil: '2026-12-31',
+    })
+    expect(quarantineStatus(next.dogs[0], next.settings, '2026-10-02').stage).toBe('certified')
+    const dropped = setDogQuarantine(next, 'd1', { rabiesVaccinatedOn: null })
+    expect(quarantineStatus(dropped.dogs[0], dropped.settings, '2026-10-02').isSellable).toBe(true)
   })
 })
