@@ -4208,6 +4208,12 @@ export function compareChannels(data: AppData, batchId: string, inputs: ChannelI
   ```
   （**不许写 `git add src`**——这个仓里同时可能有人在改别的文件。）
 
+> **Task 19 派发前审计（2026-10-03，控制器核对了实际代码）**
+> - `validateSettings`（`src/domain/settlement.ts:51-62`）**已经**有 `quarantinePerDog` 与 `disposalPerDog` 两条（第 59、60 行，合规修订时加的），所以本任务只追加两条新的是对的，**不要去改那两条**。现有 6 条的写法与顺序：合伙人非空 → 分成和 = 1 → `targetMarginRate` → `expectedMortalityRate`（注意它是 `>= 0 && < 1`，不是 `>= 0`）→ `quarantinePerDog` → `disposalPerDog`。新两条追加在**末尾**。
+> - **这个函数是「遇到第一个错就 return」**，所以两条新校验排在末尾意味着：分成比例填错时用户看不到「天数不能为负」的提示。这是既有风格，本任务**不要**改成收集全部错误——那会连带改动 Task 5 已验收的行为与它的 9 个测试。
+> - **两个天数的输入框有一个具体的坑，必须显式拦住**：`Number('') === 0`。用户在「狂犬免疫后等待天数」里先输入 `21` 再把内容清空时，如果不先判空串就直接 `Number(v)`，等待天数会被**静默写成 0**，后果是「检」页面立刻把刚接种的狗判成「可以送检」——**用户会拿着还没到免疫期的狗去申报检疫**。所以两个 `onChange` 都必须照抄 `SettingsPanel` 里既有的写法：先 `if (v.trim() === '') return`，再 `if (!Number.isFinite(n)) return`（`targetMarginRate` / `expectedMortalityRate` 两处就是这么写的）。
+> - 行为 4（「改完保存后「检」页面的阶段判定立刻反映新值」）**不需要额外订阅或刷新代码**：`useAppData` 的 `update` 写进同一个 context，两个页面读的是同一份 `data.settings`。Step 5 的手动验证就是证明它。
+
 ---
 
 ### Task 20: 「报」页的成本结构与死亡率趋势
