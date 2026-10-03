@@ -420,7 +420,7 @@ export function parseMoney(input: string): Money | null {
 - [ ] **Step 4: 跑测试确认通过**
 
 Run: `npx vitest run src/domain/money.test.ts`
-Expected: 14 passed
+Expected: 11 passed
 
 - [ ] **Step 5: 提交**
 
@@ -1456,7 +1456,7 @@ Expected: 18 passed
 - [ ] **Step 5: 跑全量测试**
 
 Run: `npx vitest run`
-Expected: 全部 passed（约 70 个）
+Expected: 全部 passed（约 67 个）
 
 - [ ] **Step 6: 提交**
 
