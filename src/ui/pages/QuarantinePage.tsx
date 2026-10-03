@@ -5,9 +5,8 @@ import { setDogQuarantine } from '../../domain/actions'
 import { certExpiresIn, preSaleChecklist, quarantineStatus } from '../../domain/quarantine'
 import { todayLocalIso } from '../planForm'
 import { isOnHand } from '../dogLedger'
-import type { Batch } from '../../domain/types'
+import { expiresText, needsVaccinationDateHint, pickBatch, quickAction } from '../quarantineView'
 import type { DogQuarantinePatch } from '../../domain/actions'
-import type { QuarantineStage } from '../../domain/quarantine'
 
 /**
  * 「检」页面 —— 这批狗谁能卖、谁不能卖、为什么。
@@ -23,45 +22,9 @@ import type { QuarantineStage } from '../../domain/quarantine'
  */
 
 /**
- * 最近创建的批次。
- *
- * 任务书写的是「`createdAt` 最大者」，但 `Batch` 上**没有 `createdAt` 这个字段**
- * （`types.ts:88-97` 只有 id/name/date/source/note/status/plannedChannel）。
- * `createBatch` 是往数组尾部追加的，所以「最后一条」就是最近建的那条 —— 这也是唯一
- * 与创建时刻相关的顺序。不拿 `date` 排：`date` 是这批狗的业务日期，用户可以同一天建两批、
- * 也可以给新批次填个过去的日期，按它排会把刚建的批次藏起来。
+ * 显示判定与快捷动作全部来自 `../quarantineView`（纯函数，有单测）。
+ * 这里只留下样式常量与渲染 —— 本轮重构没有改任何文案与 DOM 结构。
  */
-function latestBatch(batches: Batch[]): Batch | null {
-  return batches.length === 0 ? null : batches[batches.length - 1]
-}
-
-/** 快捷动作：把阶段往前推一格最省事的那一步。`focusCert` 表示这一格要人填东西，不是点一下能完成的。 */
-interface QuickAction {
-  text: string
-  patch?: DogQuarantinePatch
-  focusCert?: boolean
-}
-
-function quickAction(stage: QuarantineStage, today: string): QuickAction | null {
-  switch (stage) {
-    case 'unvaccinated': return { text: '今天已接种', patch: { rabiesVaccinatedOn: today } }
-    case 'ready_to_test': return { text: '今天已送检', patch: { antibodyTestedOn: today } }
-    case 'waiting_cert': return { text: '已有证明', focusCert: true }
-    // 等待期内没有什么「点一下就好」的事；可售与已过期都不需要动作。
-    case 'waiting_antibody': return null
-    case 'certified': return null
-    case 'cert_expired': return null
-  }
-}
-
-/** 证明还有几天到期。`null` = 没填有效期（是「不知道」，不是「还剩 0 天」）。 */
-function expiresText(days: number | null): string | null {
-  if (days === null) return null
-  if (days < 0) return `已过期 ${-days} 天`
-  if (days === 0) return '今天到期'
-  return `还有 ${days} 天到期`
-}
-
 const ROW = 'block border-b border-gray-100 py-2'
 const ROW_LABEL = 'text-xs text-gray-500'
 const ROW_INPUT = 'mt-1 w-full rounded-md bg-gray-100 px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-emerald-500'
@@ -78,7 +41,8 @@ export function QuarantinePage() {
   // 也不要写 `toISOString().slice(0, 10)`：那是 UTC，东八区晚上 8 点后返回昨天。
   const [today] = useState(() => todayLocalIso(new Date()))
 
-  const batch = data.batches.find(b => b.id === selectedBatchId) ?? latestBatch(data.batches)
+  // 没选中（或选中的批次已不存在）就用最近建的那条；为什么不按 date 排见 quarantineView.ts。
+  const batch = pickBatch(data.batches, selectedBatchId)
   if (batch === null) {
     return (
       <div className="px-4 pb-6 pt-6">
@@ -131,9 +95,8 @@ export function QuarantinePage() {
           const action = quickAction(status.stage, today)
           const open = expanded.includes(d.id)
           const expires = expiresText(certExpiresIn(d, today))
-          // 2026-10-03 裁定：有证明就能卖，接种日期只是台账的完整性问题。
-          // 判据写在界面侧（域层不为这一条加字段、也不改 QuarantineStatus 的形状）。
-          const missingVaccinationDate = d.rabiesVaccinatedOn === null && status.stage === 'certified'
+          // 2026-10-03 裁定：有证明就能卖，接种日期只是台账的完整性问题。判据在 quarantineView。
+          const missingVaccinationDate = needsVaccinationDateHint(d, status.stage)
           return (
             <li key={d.id} className="rounded-xl bg-white p-3 shadow-sm">
               <div className="flex items-baseline justify-between">
