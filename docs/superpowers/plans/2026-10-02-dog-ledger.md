@@ -3809,7 +3809,7 @@ git commit -m "feat(ui): 设置页（合伙人 / 分成 / 目标毛利 / 自定�
 
 **顺序**：15 与 16 是纯函数（`domain/`，有单测）；17–19 是界面接线。19 依赖 17 的页面存在，18 依赖 16。
 
-> **⚠️ 实施顺序变更（2026-10-03，用户拍板）**：用户决定**先把「检」页面这一组做完**，再回头做 Task 12 / 13 / 20 / 14。所以实际执行顺序是 **15 → 17 → 12 → 13 → 19 → 16 → 18 → 20 → 14**，本文档里的任务编号不变（编号是身份，不是顺序）。
+> **⚠️ 实施顺序变更（2026-10-03，用户拍板）**：用户决定**先把「检」页面这一组做完**，再回头做 Task 12 / 13 / 20 / 14。所以实际执行顺序是 **15 → 17 → 12 → 13 → 19 → 16 → 18 → 20 → 21 → 14**，本文档里的任务编号不变（编号是身份，不是顺序）。
 >
 > 理由（用户原话的意图）：不管最后走宠物店、犬市还是别的渠道，**检疫证明都是每一单出售的法定前置**，所以检疫台账是「所有路线都需要的地基」，先把地基打完再谈别的。
 >
@@ -3817,6 +3817,8 @@ git commit -m "feat(ui): 设置页（合伙人 / 分成 / 目标毛利 / 自定�
 > 1. **Task 19 要往 `src/ui/pages/SettingsPanel.tsx` 里加两个输入框，而这个文件是 Task 13 的产物**（Task 19 自己的 Consumes 也写着「Task 13 已有的表单组件 `Field`」）；
 > 2. **Task 13 要把 `SettingsPanel` 挂到 `src/ui/pages/ReportPage.tsx` 底下，而这个文件由 Task 12 整体替换**（Task 13 的 Files 写着 Modify ReportPage；Task 12 的 Files 写着 Modify ReportPage「整体替换」）。
 > 所以 Task 12 与 Task 13 都必须排在 Task 19 之前。现顺序把 12 → 13 → 19 连在一起，检疫这一组（15 / 17 / 12 / 13 / 19）做完再进渠道对照（16 / 18）。Task 18 依赖的批次详情页来自早已完成的 Task 10，不受影响。
+>
+> **Task 21（批次改名）是实机走查后新加的**，排在 Task 20 之后、Task 14（上线）之前——它是可用性修补，不该挡住上线，但必须在声称「做完了」之前修掉：同一天建两个只数相同的批次时，下拉里会出现两条一模一样的选项。
 >
 > 用户同时裁定：**30 天隔离与资金占用成本先不进模型**（《狂犬病防治技术规范》5.3 的「引进后应至少隔离观察 30 天」是否适用于纯转卖中间商，官方无明确解释，须先向当地动物卫生监督机构核实）。核实结果回来之前，**不许**在 `PlanInput` 或决策台里凭空加一个「压货天数」参数。
 
@@ -4206,7 +4208,47 @@ export function compareChannels(data: AppData, batchId: string, inputs: ChannelI
 - [ ] **Step 2**：实现 `src/domain/stats.ts`，让测试通过。
 - [ ] **Step 3**：接进 `src/ui/pages/ReportPage.tsx`。
 - [ ] **Step 4**：`npx vitest run`、`npm run build`、`npm run lint`（必须 `Found 0 warnings and 0 errors.`）、`git status --short`（必须为空）。
-- [ ] **Step 5**：提交：`git add src && git commit -m "feat(domain): 成本结构与死亡率趋势"`
+- [ ] **Step 5**：提交：`git add src/domain/stats.ts src/domain/stats.test.ts src/ui/pages/ReportPage.tsx && git commit -m "feat(domain): 成本结构与死亡率趋势"`
+
+---
+
+### Task 21: 批次改名（消掉两条一模一样的下拉选项）
+
+**为什么有这一项**：Task 17 的实机走查发现——批次名由 `src/ui/pages/CalculatePage.tsx` 自动生成为 `收狗 ${input.n} 只`，狗号又是 `` `${batchName}-${i}` ``（`src/domain/planning.ts:105`）。用户同一天建两个**只数相同**的批次（很常见：上午收 2 只、下午又收 2 只），批次下拉里就会出现**两条读起来完全一样的选项**，狗号也会跨批次重名。账算不错（`id` 唯一、「检」页按批次分开显示），但用户没法在界面上分辨这两个批次，迟早会记错账。这是可用性缺陷，不是数据缺陷。
+
+**Files:**
+- Modify: `src/domain/actions.ts`（**末尾追加**一个动作）
+- Modify: `src/domain/actions.test.ts`（补测试）
+- Modify: `src/ui/pages/DogsPage.tsx`（批次名可改）
+- Modify: `src/ui/pages/CalculatePage.tsx`（默认批次名带上时间，让新建的批次默认就不重名）
+
+**Interfaces:**
+- Produces（追加到 `src/domain/actions.ts` 末尾）：
+  ```ts
+  /** 改某个批次的名字。只改那一批；找不到时原样返回（同一引用）。 */
+  export function renameBatch(data: AppData, batchId: string, name: string): AppData
+  ```
+
+**必须满足的行为：**
+
+1. `renameBatch` 只改 `data.batches` 里那一批的 `name`；不碰 `dogs`、不碰 `entries`；`batches` 数组顺序不变；`batchId` 不存在时**返回传入的同一个对象引用**（与 `src/domain/actions.ts` 里既有动作保持一致）。
+2. **`renameBatch` 不得追溯修改狗号。** 每只狗的 `code` 是建批次时写死的 `${batchName}-${i}`，它是这批狗的历史标识（对账单、清单、纸质记录上已经这么写了）。改批次名只让**以后**新建的批次好看，不改已有狗号——**这一点必须在代码注释里写清**，否则下一个人会以为是漏了。
+3. 「狗」页面上批次名要能就地改：点一下名字变成输入框，改完立刻保存（走 `update(d => renameBatch(d, b.id, name))`）。**名字留空或只含空白时不保存**（保留原名），并给一句提示，不要让用户以为改成功了。
+4. `CalculatePage` 建批次时的默认名从 `收狗 ${n} 只` 改成 **`` `收狗 ${n} 只 ${HH}:${MM}` ``**（24 小时制、两位补零，例如 `收狗 2 只 14:07`）。时间取自 `handleCreateBatch` 里**已经存在**的那个 `new Date()`（那个调用已经是事件处理器里的、不在渲染期，符合 `## Global Constraints`），**不要新增第二个 `new Date()`**。同一分钟内建两个同只数批次仍会重名，这是可接受的——第 3 条让用户能自己改。
+5. 界面文案全中文。
+
+**测试要求**（`src/domain/actions.test.ts`，**必须显式 `import { describe, it, expect } from 'vitest'`**）：至少覆盖 —— 改名只影响那一批；不修改原数据；`batchId` 不存在时返回同一引用；`dogs` 与 `entries` 一字未动；**改批次名之后已有狗的 `code` 不变**（这条是给第 2 条钉桩的）。
+
+**Steps:**
+- [ ] **Step 1**：先给 `src/domain/actions.test.ts` 加测试（TDD），跑一次看它失败。
+- [ ] **Step 2**：实现 `renameBatch`，让测试通过。
+- [ ] **Step 3**：改「狗」页面的批次名入口与 `CalculatePage` 的默认名。
+- [ ] **Step 4**：`npx vitest run` / `npm run build` / `npm run lint` / `git status --short`。
+- [ ] **Step 5**：提交（**显式路径，不要 `git add src`**）：
+  ```bash
+  git add src/domain/actions.ts src/domain/actions.test.ts src/ui/pages/DogsPage.tsx src/ui/pages/CalculatePage.tsx
+  git commit -m "feat(ui): 批次改名与默认批次名去重"
+  ```
 
 ---
 
