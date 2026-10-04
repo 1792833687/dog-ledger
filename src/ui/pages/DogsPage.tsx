@@ -53,6 +53,13 @@ export function DogsPage() {
   // 批次名的编辑草稿：`null` = 没在改，显示的还是账上存的名字（与 `SettingsPanel.tsx`
   // 的草稿约定一致）。**不**把输入框直接绑到 `data` 上每个击键写库 —— 重渲会把用户
   // 没打完的输入吃掉（Task 13 踩过这个坑）。
+  //
+  // 这份草稿只属于「当前打开的那个批次」，所以换批次（打开另一个批次、或退回列表）
+  // 时必须连它一起丢掉。为什么不能指望空白分支自己清：提交空名字会**故意**停在编辑态
+  // 并出红字（见 `commitBatchName`），那条提前 `return` 的分支根本走不到
+  // `setBatchNameDraft(null)`。于是草稿会一直攥在手里：用户清空 A 的名字、点「← 所有批次」
+  // 退回列表，再打开批次 B，B 一进详情就是空的编辑框，外加一句红字「批次名不能是空的」
+  // —— 那是 A 留下的，用户会以为 B 的名字被弄坏了（库里其实一个字都没改）。
   const [batchNameDraft, setBatchNameDraft] = useState<string | null>(null)
 
   // 解析不了（不是空、但不是数字）时必须给中文提示并且不写账，不能静默当 0：
@@ -122,7 +129,13 @@ export function DogsPage() {
               <li key={b.id}>
                 <button
                   type="button"
-                  onClick={() => setOpenBatchId(b.id)}
+                  onClick={() => {
+                    // 打开一个批次时把上一个批次的草稿丢掉：草稿只属于它所属的那个批次，
+                    // 漏下来就会变成「新批次一进来就在编辑态、还带着别人的红字」
+                    // （见上面 batchNameDraft 处的说明）。
+                    setOpenBatchId(b.id)
+                    setBatchNameDraft(null)
+                  }}
                   className="w-full rounded-xl bg-white p-3 text-left shadow-sm"
                 >
                   <div className="flex items-baseline justify-between">
@@ -158,7 +171,12 @@ export function DogsPage() {
         <button
           type="button"
           className="mt-3 w-full rounded-xl bg-gray-100 py-3 text-sm font-semibold text-gray-700"
-          onClick={() => setOpenBatchId(null)}
+          onClick={() => {
+            // 退回列表同样要丢草稿（理由见上面 batchNameDraft 的说明），
+            // 而且「清空名字 → 失焦留在编辑态 → 点这里」正是草稿最容易漏下来的走法。
+            setOpenBatchId(null)
+            setBatchNameDraft(null)
+          }}
         >
           ← 回所有批次
         </button>
@@ -187,7 +205,16 @@ export function DogsPage() {
 
   return (
     <div className="px-4 pb-6 pt-6">
-      <button type="button" className="text-sm text-gray-500" onClick={() => setOpenBatchId(null)}>
+      <button
+        type="button"
+        className="text-sm text-gray-500"
+        onClick={() => {
+          // 和上面那个「回所有批次」一样：离开这个批次就把草稿丢掉，
+          // 别让它跟着进下一个批次（理由见上面 batchNameDraft 的说明）。
+          setOpenBatchId(null)
+          setBatchNameDraft(null)
+        }}
+      >
         ← 所有批次
       </button>
       {/* 批次名点一下就地改。只做详情视图：列表里整张卡片是 <button>，名字在里面塞不下 <input>。
