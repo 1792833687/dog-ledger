@@ -4260,6 +4260,8 @@ export function compareChannels(data: AppData, batchId: string, inputs: ChannelI
 **Files:**
 - Modify: `src/domain/settlement.ts`（`validateSettings` 加两个字段的校验）
 - Modify: `src/domain/settlement.test.ts`（加对应测试）
+- Modify: `src/ui/settingsForm.ts`（新增 `'days'` 这一种输入）
+- Modify: `src/ui/settingsForm.test.ts`
 - Modify: `src/ui/pages/SettingsPanel.tsx`（两个输入框）
 
 **Consumes:** `Settings` / `DEFAULT_SETTINGS`（types.ts）；`validateSettings`（`src/domain/settlement.ts`，Task 5）；Task 13 已有的表单组件 `Field`。
@@ -4272,7 +4274,7 @@ export function compareChannels(data: AppData, batchId: string, inputs: ChannelI
    if (!(settings.quarantineLeadDays >= 0)) return '检疫申报提前天数不能为负'
    ```
    两条都要能拦住 `-1` **与 `NaN`**。注意现有校验的写法风格是 `!(x >= 0)` 而不是 `x < 0`（`NaN` 会被前者拦下）——**保持一致**。
-2. 设置面板加两个数字输入：「狂犬免疫后等待天数」（默认 21）、「申报检疫提前天数」（默认 3），各自下面一句说明：
+2. 设置面板加两个数字输入：「狂犬免疫后等待天数」（默认 21）、「申报检疫提前天数」（默认 3）。**位置：放在「默认每只病死犬处理费」之后、`<h3>成本项</h3>` 之前**（都在「目标与预估」那一组里）。各自下面一句说明：
    - 天数一：「免疫后要满这个天数才能采血/申报。**默认 21 不是法定天数**——查过《犬产地检疫规程》与《狂犬病防治技术规范》两份原文，都只写『在有效保护期内』『每年加强免疫一次』，没有具体天数。**以给你做抗体检测的实验室和当地动物卫生监督机构的答复为准**，问清了就改成真值。」
    - 天数二：「出售前要提前这么多天申报检疫（《动物检疫管理办法》第八条第二款是三天，《犬产地检疫规程》4.1 也是三天）。」
 3. 两个输入留空或非法时**不得写入 `AppData`**（走已有输入组件的"解析失败即不保存"模式），并给一句提示。
@@ -4284,20 +4286,30 @@ export function compareChannels(data: AppData, batchId: string, inputs: ChannelI
 - [ ] **Step 1**：先给 `settlement.test.ts` 加两个负数用例（TDD）→ 运行应失败。
 - [ ] **Step 2**：改 `validateSettings` 直到通过 → `npx vitest run src/domain/settlement.test.ts`。
 - [ ] **Step 3**：改设置面板。
-- [ ] **Step 4**：`npx vitest run` / `npm run build` / `npm run lint`。
-- [ ] **Step 5**：`npm run dev` 手动验证：把等待天数改成 0 → 回「检」页面，刚接种的狗应立刻变成「可以送检」。
+- [ ] **Step 4**：`npx vitest run` / `npm run build` / `npm run lint` / `git status --short`。
+- [ ] **Step 5**：（不用 `npm run dev`；控制器的真实浏览器走查会验行为 4。）
 - [ ] **Step 6**：提交：
   ```bash
-  git add src/domain/settlement.ts src/domain/settlement.test.ts src/ui/pages/SettingsPanel.tsx
+  git add src/domain/settlement.ts src/domain/settlement.test.ts src/ui/settingsForm.ts src/ui/settingsForm.test.ts src/ui/pages/SettingsPanel.tsx
   git commit -m "feat(ui): 设置面板补检疫天数并校验"
   ```
   （**不许写 `git add src`**——这个仓里同时可能有人在改别的文件。）
 
-> **Task 19 派发前审计（2026-10-03，控制器核对了实际代码）**
+> **Task 19 派发前审计（2026-10-03，控制器核对了实际代码；2026-10-03 二次修订，因为 Task 13 改了面板的写法）**
 > - `validateSettings`（`src/domain/settlement.ts:51-62`）**已经**有 `quarantinePerDog` 与 `disposalPerDog` 两条（第 59、60 行，合规修订时加的），所以本任务只追加两条新的是对的，**不要去改那两条**。现有 6 条的写法与顺序：合伙人非空 → 分成和 = 1 → `targetMarginRate` → `expectedMortalityRate`（注意它是 `>= 0 && < 1`，不是 `>= 0`）→ `quarantinePerDog` → `disposalPerDog`。新两条追加在**末尾**。
 > - **这个函数是「遇到第一个错就 return」**，所以两条新校验排在末尾意味着：分成比例填错时用户看不到「天数不能为负」的提示。这是既有风格，本任务**不要**改成收集全部错误——那会连带改动 Task 5 已验收的行为与它的 9 个测试。
-> - **两个天数的输入框有一个具体的坑，必须显式拦住**：`Number('') === 0`。用户在「狂犬免疫后等待天数」里先输入 `21` 再把内容清空时，如果不先判空串就直接 `Number(v)`，等待天数会被**静默写成 0**，后果是「检」页面立刻把刚接种的狗判成「可以送检」——**用户会拿着还没到免疫期的狗去申报检疫**。所以两个 `onChange` 都必须照抄 `SettingsPanel` 里既有的写法：先 `if (v.trim() === '') return`，再 `if (!Number.isFinite(n)) return`（`targetMarginRate` / `expectedMortalityRate` 两处就是这么写的）。
-> - 行为 4（「改完保存后「检」页面的阶段判定立刻反映新值」）**不需要额外订阅或刷新代码**：`useAppData` 的 `update` 写进同一个 context，两个页面读的是同一份 `data.settings`。Step 5 的手动验证就是证明它。
+> - **⚠️ 原审计里那条「照抄 `targetMarginRate` / `expectedMortalityRate` 的 `if (v.trim() === '') return` 写法」已经过期。** Task 13 把「设置」面板的 6 个输入框全部改成了**本地草稿**制（见 Task 13 实施记录），现在 `目标毛利率` 那一段是 `setMarginDraft(v)` + `applyPercentInput(v)` + `ratio === null` 就不写账。两个新输入框**必须沿用同一套**：往 `src/ui/settingsForm.ts` 里加第三种（第四种）输入类型 `'days'`——
+>   ```ts
+>   /** 天数的解析与显示。空串、非数字、负数、非整数都不收。 */
+>   export function applyDaysInput(raw: string): { draft: string; days: number | null }
+>   ```
+>   规则：trim 后空串 → `{ draft: raw, days: null }`；不是有限数 → 同上；负数 → 同上；**不是整数（如 `21.5`）→ 同上**（理由：`addDays`/`setUTCDate` 收小数日的行为不直观，第 21.5 天没有意义，与其悄悄截断不如让人看见自己填错了；这条与 Task 13b 确立的「拒绝，不夹取」一致）；否则 `{ draft: raw, days: n }`。**`draft` 永远原样保留**（这样打 `2` 再打 `1` 的中间态不会被改写）。
+>   `inputError` 加一个 `case 'days'`：非数字 → `'天数要填一个数字，例如 21'`；负数 → `'天数不能是负数'`；非整数 → `'天数要填整数，例如 21'`；空串 → `undefined`。
+> - **两个天数各自独立一份草稿**（`rabiesWaitDaysDraft` / `quarantineLeadDaysDraft`），和 Task 13 那六个一样用 `useState<string | null>(null)`，`null` 表示没碰过、显示账上值。
+> - **`Number('') === 0` 这个坑现在由 `applyDaysInput` 的结构挡掉**（空串直接返回 `days: null`），但**必须有一条测试钉住它**：`applyDaysInput('')` → `{ draft: '', days: null }`。用户在「狂犬免疫后等待天数」里把 `21` 清空时，如果空串被当成 0，等待天数会被**静默写成 0**，后果是「检」页面立刻把刚接种的狗判成「可以送检」——**用户会拿着还没到免疫期的狗去申报检疫**。
+> - 行为 4（「改完保存后「检」页面的阶段判定立刻反映新值」）**不需要额外订阅或刷新代码**：`useAppData` 的 `update` 写进同一个 context，两个页面读的是同一份 `data.settings`。控制器的浏览器走查会验它。
+> - **不要碰 `src/App.tsx`、`src/domain/quarantine.ts`、`src/domain/types.ts`。** `validateSettings` 的返回类型是 `string | null`，两条新校验的文案必须**逐字**是 `'狂犬免疫后等待天数不能为负'` 与 `'检疫申报提前天数不能为负'`。
+> - 提交用 5 个显式路径（见 Step 6）。
 
 ---
 
