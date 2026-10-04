@@ -51,6 +51,20 @@ export function todayLocalIso(now: Date): string {
   return `${y}-${m}-${d}`
 }
 
+/**
+ * 本机时区的「时:分」，24 小时制、两位补零，例如 "14:07"。
+ * 和 `todayLocalIso` 一样不能用 toISOString()——那是 UTC，东八区会差 8 小时。
+ *
+ * 用途：一键建批次时把时间写进默认批次名（`收狗 2 只 14:07`）。同一天建两个**只数相同**
+ * 的批次是很常见的事（上午收 2 只、下午又收 2 只），没有这个时间戳，批次选择器里就会出现
+ * 两条读起来完全一样的选项，用户没法在界面上分辨它们。
+ */
+export function localTimeHm(now: Date): string {
+  const h = String(now.getHours()).padStart(2, '0')
+  const min = String(now.getMinutes()).padStart(2, '0')
+  return `${h}:${min}`
+}
+
 /** 金额输入框的初始文本：分 -> 元的字符串（整数不拖小数点尾巴）。 */
 export function fenToTextInput(fen: Money): string {
   return String(fen / 100)

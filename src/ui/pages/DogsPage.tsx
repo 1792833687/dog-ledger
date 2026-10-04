@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useAppData } from '../../state/useAppData'
 import { batchSummary, dogsOfBatch, dilutedCostFen, dogIncome, dogProfitFen } from '../../domain/costing'
-import { sellDog, markDogDead, setDogStatus, createBatch, addExpense, setBatchChannel } from '../../domain/actions'
+import { sellDog, markDogDead, setDogStatus, createBatch, addExpense, setBatchChannel, renameBatch } from '../../domain/actions'
 import { formatMoney, parseMoney } from '../../domain/money'
 import { newId } from '../../domain/types'
 import { Modal } from '../components/Modal'
@@ -50,6 +50,10 @@ export function DogsPage() {
   const [refundAmount, setRefundAmount] = useState('')
   const [refundKeepSold, setRefundKeepSold] = useState(false)
   const [refundNote, setRefundNote] = useState('')
+  // 批次名的编辑草稿：`null` = 没在改，显示的还是账上存的名字（与 `SettingsPanel.tsx`
+  // 的草稿约定一致）。**不**把输入框直接绑到 `data` 上每个击键写库 —— 重渲会把用户
+  // 没打完的输入吃掉（Task 13 踩过这个坑）。
+  const [batchNameDraft, setBatchNameDraft] = useState<string | null>(null)
 
   // 解析不了（不是空、但不是数字）时必须给中文提示并且不写账，不能静默当 0：
   // 用户把「600元」打成「６00」而系统按 0 记账，那一批的成本从此就是错的，且没人会发现。
@@ -60,6 +64,9 @@ export function DogsPage() {
   const refundParsed = parseMoney(refundAmount)
   const refundInvalid = refundAmount.trim() !== '' && refundParsed === null
   const refundDog = refundingDogId === null ? null : data.dogs.find(d => d.id === refundingDogId) ?? null
+  // 只含空白 = 空名字，不写库。红字由草稿推导、不用额外的错误状态：
+  // 只要用户还停在编辑态、框里是空的，这句话就一直在（和 SettingsPanel 的 inputError 一致）。
+  const batchNameBlank = batchNameDraft !== null && batchNameDraft.trim() === ''
 
   /**
    * 记退款支出。设计文档 §3.4 与 §6 要求 `returned` 必须伴随一笔
@@ -162,12 +169,50 @@ export function DogsPage() {
   const summary = batchSummary(data, batch.id)
   const dogs = dogsOfBatch(data, batch.id)
 
+  /**
+   * 提交批次名。回车与失焦都走这里。
+   * 留空（或只有空白）**不写库**、留在编辑态并出红字：静默保留原名会让用户以为改成功了。
+   * Esc 不走这里，直接丢草稿。
+   *
+   * 写成箭头函数而不是 `function` 声明是必需的：`batch` 在这里是 `Batch | undefined`
+   * 被上面的提前 return 收窄过的，函数声明会被提升、收窄在它体内不成立（`tsc` 报 TS18048）。
+   */
+  const commitBatchName = (): void => {
+    const name = batchNameDraft
+    if (name === null) return
+    if (name.trim() === '') return
+    void update(d => renameBatch(d, batch.id, name))
+    setBatchNameDraft(null)
+  }
+
   return (
     <div className="px-4 pb-6 pt-6">
       <button type="button" className="text-sm text-gray-500" onClick={() => setOpenBatchId(null)}>
         ← 所有批次
       </button>
-      <h1 className="mt-2 text-xl font-bold">{batch.name}</h1>
+      {/* 批次名点一下就地改。只做详情视图：列表里整张卡片是 <button>，名字在里面塞不下 <input>。
+          <h1> 里放 <button> 是合法的（button 属于 phrasing content），Tailwind preflight
+          已经把 button 的边框与背景清掉了，不用另写样式。 */}
+      <h1 className="mt-2 text-xl font-bold">
+        {batchNameDraft === null ? (
+          <button type="button" className="text-left" onClick={() => setBatchNameDraft(batch.name)}>
+            {batch.name}
+          </button>
+        ) : (
+          <input
+            autoFocus
+            className="w-full rounded-lg bg-gray-100 px-2 py-1 outline-none"
+            value={batchNameDraft}
+            onChange={e => setBatchNameDraft(e.target.value)}
+            onBlur={commitBatchName}
+            onKeyDown={e => {
+              if (e.key === 'Enter') commitBatchName()
+              if (e.key === 'Escape') setBatchNameDraft(null)
+            }}
+          />
+        )}
+      </h1>
+      {batchNameBlank && <p className="mt-1 text-xs text-red-500">批次名不能是空的</p>}
       <div className="mt-1 flex items-center gap-2 text-xs text-gray-500">
         <span>{batch.date} · 去向：</span>
         {/* 批次打算走哪条路。之前这里直接把 channelId 印给用户看（`去向：pet_shop`）。

@@ -4,6 +4,7 @@ import type { PlanTextForm } from './planForm'
 import {
   defaultPlanText,
   fenToTextInput,
+  localTimeHm,
   parseMortalityPercent,
   parsePlanText,
   todayLocalIso,
@@ -163,5 +164,27 @@ describe('todayLocalIso', () => {
     expect(todayLocalIso(new Date(2026, 9, 3, 23, 30))).toBe('2026-10-03')
     expect(todayLocalIso(new Date(2026, 0, 1, 0, 0))).toBe('2026-01-01')
     expect(todayLocalIso(new Date(2026, 11, 31, 12, 0))).toBe('2026-12-31')
+  })
+})
+
+/**
+ * Task 21：默认批次名带上的「时:分」。
+ *
+ * 两个测试用的是**本机构造**的 `Date`（`new Date(2026, 9, 3, 14, 7)` 就是本机 14:07），
+ * 所以断言在任何时区都成立；而它恰好也能钉住「不能用 UTC」—— 东八区下
+ * `toISOString().slice(11, 16)` 会给出 `06:07` 而不是 `14:07`。
+ */
+describe('localTimeHm', () => {
+  it('个位数的小时与分钟都补零', () => {
+    expect(localTimeHm(new Date(2026, 9, 3, 9, 7))).toBe('09:07')
+  })
+
+  it('下午用 24 小时制，不退回 12 小时制', () => {
+    expect(localTimeHm(new Date(2026, 9, 3, 14, 7))).toBe('14:07')
+    expect(localTimeHm(new Date(2026, 9, 3, 23, 59))).toBe('23:59')
+  })
+
+  it('午夜是 00:00（不是 12:00、也不是 24:00）', () => {
+    expect(localTimeHm(new Date(2026, 9, 3, 0, 0))).toBe('00:00')
   })
 })

@@ -1,9 +1,11 @@
 import { describe, it, expect } from 'vitest'
 import { DEFAULT_DATA, BUILTIN_COST_ITEMS } from './types'
+import type { Dog } from './types'
 import {
   setDogStatus, sellDog, markDogDead, addExpense, createBatch,
   addInjection, addIncome, addReimbursement, addDistribution, setDogQuarantine,
   updateSettings, renamePartner, setPartnerRatio, addCostItem, setBatchChannel,
+  renameBatch,
 } from './actions'
 import { batchSummary, dogIncome, dogOwnCost, batchTotalCost, dogProfitFen } from './costing'
 import { poolBalance, advanceBalance, contributedCapital, distributedTo } from './ledger'
@@ -889,5 +891,95 @@ describe('setBatchChannel', () => {
     setBatchChannel(data, id, 'rural_fair')
     expect(data.batches[0].plannedChannel).toBe('undecided')
     expect(DEFAULT_DATA.batches).toHaveLength(0)
+  })
+})
+
+/**
+ * Task 21：改批次名（消掉两条一模一样的下拉选项）。
+ *
+ * 这一组里最要紧的是「★ 狗号不变」那两条：`code` 是这批狗的**历史标识** ——
+ * 对账单、纸质清单上已经按旧名写下来了，所以改批次名**刻意不追溯改狗号**
+ * （`renameBatch` 的注释里写了为什么）。谁要是哪天"顺手"把狗号也跟着改了，
+ * 这两条会立刻变红。
+ *
+ * 另一条钉子：`data` 里根本没有「靠批次名反查、重算狗号」这种机制 —— 所以
+ * 界面上「批次名改了、狗号还是旧名」是**预期行为**，走查时不要当成 bug 报。
+ */
+describe('renameBatch', () => {
+  /**
+   * 一批 2 只狗，狗号按建批次时那条真实规则生成：`` `${批次名}-${序号}` ``
+   * （`planning.ts:105` 是这条规则唯一的出处；手动补录走的是 `-补N`，见
+   * `DogsPage.tsx:331`）。
+   */
+  function renameSeed() {
+    const data = createBatch(DEFAULT_DATA, '收狗 2 只', '2026-10-03')
+    const batch = data.batches[0]
+    const dogs: Dog[] = [1, 2].map(i => ({
+      id: `d${i}`, batchId: batch.id, code: `${batch.name}-${i}`, breed: '',
+      sex: 'unknown', ageMonths: null, status: 'in_stock', note: '',
+      rabiesVaccinatedOn: null, antibodyTestedOn: null, antibodyReportNo: '',
+      quarantineCertNo: '', quarantineCertIssuedOn: null, quarantineCertValidUntil: null,
+    }))
+    return { ...data, dogs: [...data.dogs, ...dogs] }
+  }
+
+  it('改一个批次的名字', () => {
+    const data = createBatch(DEFAULT_DATA, '一批', '2026-10-03')
+    const next = renameBatch(data, data.batches[0].id, '10月3日李村')
+    expect(next.batches[0].name).toBe('10月3日李村')
+  })
+
+  it('只换那一个批次对象，其余批次连引用都不换、顺序不变、别的字段不动', () => {
+    let data = createBatch(DEFAULT_DATA, '一', '2026-10-03')
+    data = createBatch(data, '二', '2026-10-04')
+    data = createBatch(data, '三', '2026-10-05')
+    const before = data.batches
+    const next = renameBatch(data, before[1].id, '二（下午收的）')
+    expect(next.batches).toHaveLength(3)
+    expect(next.batches[0]).toBe(before[0])
+    expect(next.batches[1]).not.toBe(before[1])
+    expect(next.batches[2]).toBe(before[2])
+    expect(next.batches.map(b => b.name)).toEqual(['一', '二（下午收的）', '三'])
+    // 别的字段原样保留：改名不是「重建一个批次」。
+    expect(next.batches[1].id).toBe(before[1].id)
+    expect(next.batches[1].date).toBe('2026-10-04')
+    expect(next.batches[1].plannedChannel).toBe(before[1].plannedChannel)
+  })
+
+  it('dogs / entries / settings 一律不动（连引用都不换）', () => {
+    const data = renameSeed()
+    const next = renameBatch(data, data.batches[0].id, '新名字')
+    expect(next.dogs).toBe(data.dogs)
+    expect(next.entries).toBe(data.entries)
+    expect(next.settings).toBe(data.settings)
+  })
+
+  it('批次不存在时原样返回同一引用', () => {
+    const data = renameSeed()
+    expect(renameBatch(data, 'no-such-batch', '新名字')).toBe(data)
+  })
+
+  it('不修改传入的 data 本身', () => {
+    const data = createBatch(DEFAULT_DATA, '一批', '2026-10-03')
+    const id = data.batches[0].id
+    renameBatch(data, id, '改过的名字')
+    expect(data.batches[0].name).toBe('一批')
+    expect(DEFAULT_DATA.batches).toHaveLength(0)
+  })
+
+  it('★ 改批次名之后已有狗的 code 一个都不变（刻意不追溯改狗号）', () => {
+    const data = renameSeed()
+    expect(data.dogs.map(d => d.code)).toEqual(['收狗 2 只-1', '收狗 2 只-2'])
+    const next = renameBatch(data, data.batches[0].id, '下午收的 2 只')
+    expect(next.batches[0].name).toBe('下午收的 2 只')
+    // 狗号还是建批次时那批旧名 —— 纸质清单上就是按它写的，改了就对不上账。
+    expect(next.dogs.map(d => d.code)).toEqual(['收狗 2 只-1', '收狗 2 只-2'])
+  })
+
+  it('★ 改批次名连狗对象本身都不换（没有任何「顺手改 code」的机会）', () => {
+    const data = renameSeed()
+    const next = renameBatch(data, data.batches[0].id, '下午收的 2 只')
+    expect(next.dogs[0]).toBe(data.dogs[0])
+    expect(next.dogs[1]).toBe(data.dogs[1])
   })
 })

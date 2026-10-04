@@ -277,3 +277,31 @@ export function setBatchChannel(data: AppData, batchId: string, channel: Channel
     batches: data.batches.map(b => (b.id === batchId ? { ...b, plannedChannel: channel } : b)),
   }
 }
+
+/**
+ * 改某个批次的名字。只改那一批；找不到时原样返回（同一引用）。
+ * 别的批次连对象引用都不换，`dogs` / `entries` / `settings` 一律不动。
+ *
+ * **为什么改批次名不追溯改狗号（这是刻意的，不是漏了）。**
+ *
+ * 每只狗的 `code` 在**建批次时**就一次性写死了：按只数一键建的批次走
+ * `` `${batchName}-${i}` ``（`planning.ts:105`），手动补录的走
+ * `` `${batch.name}-补${dogs.length + 1}` ``（`DogsPage.tsx:331`）。
+ * 这个字符串是这批狗的**历史标识** —— 对账单、纸质清单、和客户/卖家的口头往来
+ * 上已经按它写下来了。改批次名只让**以后**新建的批次好看，不是给旧狗重新编号：
+ * 追溯改写已有 `code` 会让所有已经发出去的凭证对不上账，而账目能不能对上，
+ * 比「名字看起来统一」重要得多。
+ *
+ * 所以：走查时看到「批次名改了、狗号还是旧名」是**预期行为**。
+ * `actions.test.ts` 里有一组测试专门钉住它。
+ *
+ * 不做 `trim`、也不拦空名：与 `addCostItem` 不给 `name` 做 `trim` 同一道理 ——
+ * 域层保持宽松，「不能是空的」由界面把关（它比域层更清楚用户看见了什么）。
+ */
+export function renameBatch(data: AppData, batchId: string, name: string): AppData {
+  if (!data.batches.some(b => b.id === batchId)) return data
+  return {
+    ...data,
+    batches: data.batches.map(b => (b.id === batchId ? { ...b, name } : b)),
+  }
+}

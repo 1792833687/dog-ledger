@@ -12,7 +12,7 @@ import {
   emptyChannelRows, parseAliveInput,
 } from '../channelView'
 import type { PlanFieldKey, PlanTextForm } from '../planForm'
-import { defaultPlanText, parsePlanText, todayLocalIso } from '../planForm'
+import { defaultPlanText, localTimeHm, parsePlanText, todayLocalIso } from '../planForm'
 
 /** 一行没填过的渠道：三格全空 = 全按 0 算。 */
 const EMPTY_ROW: ChannelRowText = { unitPrice: '', extraPerDog: '', fixedCost: '' }
@@ -106,8 +106,14 @@ export function CalculatePage() {
   }
 
   function handleCreateBatch() {
-    const name = `收狗 ${input.n} 只`
-    const date = todayLocalIso(new Date())
+    // `now` 必须留在事件处理器里：把它提到组件体（渲染期）会被 lint 的 react(purity)
+    // 拦下（本仓门禁是 0 warning），而且重新渲染时会拿到"另一个现在"。
+    // 同一个 `now` 同时喂给批次名和日期 —— 跨过午夜那一下也不会出现「名字是昨天、日期是今天」。
+    const now = new Date()
+    // 默认名带上时间：同一天建两个只数相同的批次（上午 2 只、下午 2 只）就不会再重名，
+    // 批次选择器里也就不会出现两条读起来一模一样的选项。
+    const name = `收狗 ${input.n} 只 ${localTimeHm(now)}`
+    const date = todayLocalIso(now)
     void update(d => createBatchFromPlan(d, input, name, date, selectedChannel))
     setCreated({ name, channel: selectedChannel })
   }
