@@ -42,6 +42,17 @@ export function deadLoss(data: AppData, batchId: string): Money {
 }
 
 /**
+ * 一批狗的「每只存活狗真实成本」（分，可能带小数）= 批次总成本 ÷ 存活数。
+ * 这是全仓唯一的摊薄算法：dilutedCostFen 与渠道对照都走这里。
+ * 整批死光时返回 0，调用方自行决定退化行为。
+ */
+export function batchPerDogCostFen(data: AppData, batchId: string): number {
+  const alive = aliveCount(data, batchId)
+  if (alive === 0) return 0
+  return batchTotalCost(data, batchId) / alive
+}
+
+/**
  * ★ 指标 B：单只狗摊薄成本（单位：分，可能带小数）。
  * 把死狗的直接成本平摊到所有非死亡个体上。
  * 整批死光时退化为该狗自身直接成本，不会除零。
@@ -52,7 +63,7 @@ export function dilutedCostFen(data: AppData, dogId: string): number {
   if (!dog) return own
   const alive = aliveCount(data, dog.batchId)
   if (alive === 0) return own
-  return batchTotalCost(data, dog.batchId) / alive
+  return batchPerDogCostFen(data, dog.batchId)
 }
 
 /** 挂到单只狗上的收入之和 */
