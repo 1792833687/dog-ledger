@@ -4215,6 +4215,16 @@ export function setBatchChannel(data: AppData, batchId: string, channel: Channel
   git commit -m "refactor(domain): 渠道算法唯一入口 compareChannelCosts + 批次计划去向动作"
   ```
 
+> **Task 16b 实施记录（2026-10-04）**
+> - 实际提交 **`67c5fb4`**（4 files / +153 / −10）。门禁：`Test Files 19 passed (19)` / `Tests 430 passed (430)`（基线 417 → +13：`channels.test.ts` 15 → 22、`actions.test.ts` 87 → 93）、`tsc -b` 无输出 + `✓ 44 modules transformed`（产物 `index-CgNq0k06.js` 277.30 kB / gzip 84.42 kB）、`Found 0 warnings and 0 errors.`（54 files）、`git status --short` 空。
+> - 落点：核心函数在 **`src/domain/channels.ts:31-54`**（`:37` `fixedPerDogFen`、`:38` `breakEvenUnitPriceFen`、`:39` `perDogProfitFen`、`:50` `isLoss`、`:41-44` 未知渠道回落 id），JSDoc 在 `:24-30`；`compareChannels` 缩成 `:55-58` 的**一行包装**；`setBatchChannel` 在 **`src/domain/actions.ts:265-279`**（`:274` 守卫 `if (!data.batches.some(b => b.id === batchId)) return data`，`:276-278` 只换那一个批次对象）。`actions.ts` 第 1 行 `import type` 名单加了 `ChannelId`，第 2 行 `import { newId } from './types'` 原样保留。
+> - TDD 红态两段都留了证据：Step 1 `TypeError: compareChannelCosts is not a function` ×2 + `Tests 7 failed | 15 passed (22)`——**旧 15 条在新函数还不存在时已经全绿**，这本身就是「新函数与旧行为解耦」的证明；Step 3 `TypeError: setBatchChannel is not a function` ×6 + `Tests 6 failed | 87 passed (93)`。
+> - 「旧 15 条一字未改」有三重证据：`git diff -U0` 只有 `@@ -5 +5 @@`（import 行）与 `@@ -199,0 +200,63 @@`（纯插入，`0` 表示删除侧为空）两个 hunk，旧测试所在的 `:67-198` 无 hunk；`--stat` 只有 1 个 deletion（就是那行 import）；红态时旧 15 条已全绿。
+> - **唯一偏离**：行为 1 要求「包装层与核心深度相等」，这条测试必须同时 import 两个函数，因此 `channels.test.ts:6` 的 import 行必须改。同性质的还有 `actions.ts:1` 与 `actions.test.ts:6`——三处都是 import 行，不是新增文件、不是改测试体。
+> - 实施者自检（已核）：全仓 grep `fixedCostFen / `、`breakEvenUnitPriceFen =`、`perDogProfitFen =`、`isLoss: perDogProfitFen` 只命中 `channels.ts:37/38/39/50`，坐实三条算式只存在于核心函数内。
+> - **保留的两处不一致（控制器裁定：不动）**：①核心函数收 `readonly ChannelInput[]`、包装层收 `ChannelInput[]`——核心更宽容是好事，且任务书就是这么写的；将来若 Task 18 从常量数组传进包装层不顺手，再单独改包装层签名。②`compareChannels` 里 `aliveCount` 会被调用两次（包装层一次、`batchPerDogCostFen` 内部一次）——纯函数无副作用，改它要碰 `costing.ts`，属 Task 16 的既成事实，不动。
+> - **Task 18 的接线红线（由此任务的 JSDoc 钉住）**：「算」页面的渠道对照必须调 `compareChannelCosts`，**不得再造临时 `AppData`、不得造假狗**。若它被 import 了却仍走 `compareChannels`，空批次下 `aliveCount` 为 0 ⇒ `batchPerDogCostFen` 返回 0 ⇒ 保本价与固定成本静默变 0，用户的摊位费一分钱不起作用且不报错。review 时直接 grep 这个调用即可确认。
+
 ---
 
 ### Task 17: 「检」页面 + 底部导航接线
