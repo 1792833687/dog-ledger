@@ -1,32 +1,36 @@
-# React + TypeScript + Vite
+# 狗账
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+**给两个合伙人记犬只买卖账的手机网页。** 用手机浏览器打开、加到桌面就像一个 App。
+数据只存在这台手机自己的浏览器里，**不联网、不上传、没有服务器**，也不做多人同步或云端备份。
 
-Currently, two official plugins are available:
+## 五个页面
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+| 标签 | 干什么 |
+| --- | --- |
+| 算 | 建一个进狗批次，填各项成本，算出卖到多少钱才保本；顺手记当天抓回来的狗。 |
+| 狗 | 每只狗的状态与去向（在栏 / 已卖 / 死亡 / 退回），卖出与死亡的数字从这里进账。 |
+| 检 | 每只狗的检疫证明记录 —— 平台要求有证明，没证明就卖不掉。 |
+| 钱 | 合伙人的池子：注资、垫付、分红，以及池子当前余额。 |
+| 报 | 分账（每人应分 / 已分 / 还垫着多少）、批次盈亏排行，生成对账单图片发伙伴。 |
 
-## React Compiler
+## 本地跑
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the Oxlint configuration
-
-If you are developing a production application, we recommend enabling type-aware lint rules by installing `oxlint-tsgolint` and editing `.oxlintrc.json`:
-
-```json
-{
-  "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["react", "typescript", "oxc"],
-  "options": {
-    "typeAware": true
-  },
-  "rules": {
-    "react/rules-of-hooks": "error",
-    "react/only-export-components": ["warn", { "allowConstantExport": true }]
-  }
-}
+```bash
+npm ci
+npm run dev
 ```
 
-See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rules) for the full list of rules and categories.
+改完代码过三道门禁：`npx vitest run`（测试）、`npm run build`（类型检查 + 打包）、`npm run lint`（0 warnings 才算过）。
+
+## 数据在哪、怎么备份（**最重要的一节**）
+
+账本存在浏览器自己的数据库（IndexedDB）里。**清了浏览器数据、换手机、卸载浏览器，账就没了，找不回来。**
+所以不定期去「报」页面最底下点**导出备份文件**，把下载到的 `狗账备份-YYYY-MM-DD.json`
+立刻发到微信「文件传输助手」或存进电脑；换设备时在新手机上打开本页，用**从备份恢复**选中那个文件。
+三天没备份，「报」页上方会挂一条黄色提醒。
+
+## 上线与合规
+
+- 部署步骤见 [DEPLOY.md](./DEPLOY.md)（构建命令、两种国内托管、上线后必做三步）。
+- `docs/compliance/` 是上线前的合规调研：法规篇、平台篇、销售路径篇与待核实项补查。
+  记「检」页那些检疫证明的理由就在那里 —— 平台查证明，缺了会被下架或罚款。

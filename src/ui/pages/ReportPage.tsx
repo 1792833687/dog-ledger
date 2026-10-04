@@ -7,6 +7,7 @@ import { formatMoney } from '../../domain/money'
 import { buildReceiptRows, receiptToBlob } from '../receipt'
 import { todayLocalIso } from '../planForm'
 import { SettingsPanel } from './SettingsPanel'
+import { BackupPanel } from './BackupPanel'
 
 /** `0.2` → `20.0%`。与排行块的死亡率写法保持一致（都是 `toFixed(1)`）。 */
 function percentText(rate: number): string {
@@ -253,6 +254,7 @@ export function ReportPage() {
       )}
 
       <SettingsPanel />
+      <BackupPanel />
     </div>
   )
 }

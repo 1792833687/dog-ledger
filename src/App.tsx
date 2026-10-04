@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { AppDataProvider } from './state/AppDataContext'
 import { useAppData } from './state/useAppData'
 import { TabBar } from './ui/TabBar'
+import { BackupBanner } from './ui/components/BackupBanner'
 import { DEFAULT_TAB, TABS } from './ui/tabs'
 import type { TabKey } from './ui/tabs'
 
@@ -19,6 +20,7 @@ function Shell() {
 
   return (
     <div className="min-h-dvh bg-gray-50 pb-16">
+      <BackupBanner onGoToBackup={() => setTab('report')} />
       <main className="mx-auto max-w-lg">
         <Current />
       </main>
