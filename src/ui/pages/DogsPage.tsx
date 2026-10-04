@@ -1,12 +1,13 @@
 import { useState } from 'react'
 import { useAppData } from '../../state/useAppData'
 import { batchSummary, dogsOfBatch, dilutedCostFen, dogIncome, dogProfitFen } from '../../domain/costing'
-import { sellDog, markDogDead, setDogStatus, createBatch, addExpense } from '../../domain/actions'
+import { sellDog, markDogDead, setDogStatus, createBatch, addExpense, setBatchChannel } from '../../domain/actions'
 import { formatMoney, parseMoney } from '../../domain/money'
 import { newId } from '../../domain/types'
 import { Modal } from '../components/Modal'
 import { todayLocalIso } from '../planForm'
 import { isOnHand, refundedCurrentSale } from '../dogLedger'
+import { channelOptions, findChannel } from '../channelView'
 
 /**
  * 「狗」页面 —— 批次台账。
@@ -167,9 +168,25 @@ export function DogsPage() {
         ← 所有批次
       </button>
       <h1 className="mt-2 text-xl font-bold">{batch.name}</h1>
-      <p className="mt-1 text-xs text-gray-500">
-        {batch.date} · 去向：{batch.plannedChannel === 'undecided' ? '未定' : batch.plannedChannel}
-      </p>
+      <div className="mt-1 flex items-center gap-2 text-xs text-gray-500">
+        <span>{batch.date} · 去向：</span>
+        {/* 批次打算走哪条路。之前这里直接把 channelId 印给用户看（`去向：pet_shop`）。
+            选项里带上「未定」；`channelOptions` 会把旧备份里认不出的渠道补在最后，
+            免得下拉框静默显示第一条、用户一碰就把原值改掉。 */}
+        <select
+          className="rounded-lg bg-white px-2 py-1 text-xs text-gray-700 shadow-sm"
+          value={batch.plannedChannel}
+          onChange={e => {
+            const picked = findChannel(e.target.value)
+            if (picked === null) return
+            void update(d => setBatchChannel(d, batch.id, picked.id))
+          }}
+        >
+          {channelOptions(batch.plannedChannel).map(o => (
+            <option key={o.id} value={o.id}>{o.name}</option>
+          ))}
+        </select>
+      </div>
 
       <div className="mt-3 rounded-xl bg-white p-4 shadow-sm">
         <div className="grid grid-cols-2 gap-3 text-sm">

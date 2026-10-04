@@ -1,11 +1,45 @@
 import { useMemo, useState } from 'react'
+import type { ChannelId } from '../../domain/types'
 import type { PlanResult } from '../../domain/planning'
 import { createBatchFromPlan, plan } from '../../domain/planning'
+import { compareChannelCosts } from '../../domain/channels'
 import { formatMoney } from '../../domain/money'
 import { useAppData } from '../../state/useAppData'
 import { Field } from '../components/Field'
+import type { ChannelRowText } from '../channelView'
+import {
+  channelInputsFromRows, channelName, comparisonChannels, defaultAliveInput,
+  emptyChannelRows, parseAliveInput,
+} from '../channelView'
 import type { PlanFieldKey, PlanTextForm } from '../planForm'
 import { defaultPlanText, parsePlanText, todayLocalIso } from '../planForm'
+
+/** 一行没填过的渠道：三格全空 = 全按 0 算。 */
+const EMPTY_ROW: ChannelRowText = { unitPrice: '', extraPerDog: '', fixedCost: '' }
+
+/** 渠道对照里一个「元」输入框。表格窄，标签放左边、字号压到最小。 */
+function MiniMoney({
+  label, value, onChange,
+}: {
+  label: string
+  value: string
+  onChange: (v: string) => void
+}) {
+  return (
+    <label className="flex items-center justify-between gap-1">
+      <span className="shrink-0 text-[10px] text-gray-400">{label}</span>
+      <span className="flex items-center gap-1">
+        <input
+          className="w-16 rounded-md bg-gray-100 px-1.5 py-1 text-right text-xs outline-none focus:bg-white focus:ring-1 focus:ring-emerald-500"
+          inputMode="decimal"
+          value={value}
+          onChange={e => onChange(e.target.value)}
+        />
+        <span className="text-[10px] text-gray-400">元</span>
+      </span>
+    </label>
+  )
+}
 
 /**
  * 「算」页面 —— 决策台。
@@ -15,6 +49,11 @@ import { defaultPlanText, parsePlanText, todayLocalIso } from '../planForm'
  *
  * 表单状态是 8 个字符串，翻译成 `PlanInput` 的那一步在 `../planForm.ts` 里，
  * 是纯函数、有测试。这里只负责摆位置、把错误显示出来、以及把决策落成批次。
+ *
+ * 页面下方那块「渠道对照」回答下一个问题：**这批走哪条路更划算**。
+ * 它的第一个参数直接用 `plan()` 算好的保本价，**界面里不算第二遍成本** ——
+ * 这里没有真实批次、没有狗、没有支出流水，自己数狗或造个假批次只会把
+ * 底价与固定成本一起算成 0（见 `channels.ts` 的注释）。
  */
 export function CalculatePage() {
   const { data, update } = useAppData()
@@ -22,7 +61,14 @@ export function CalculatePage() {
   // 初始值由设置推导一次。刻意不写 useEffect 去同步：用户改了设置之后跑回这一页，
   // 他刚才手输的数字不该被悄悄冲掉。
   const [form, setForm] = useState<PlanTextForm>(() => defaultPlanText(data.settings))
-  const [created, setCreated] = useState<string | null>(null)
+  const [created, setCreated] = useState<{ name: string; channel: ChannelId } | null>(null)
+
+  // 存活数：`null` = 用户还没碰过这个框，显示 `plan()` 给的默认值（预估存活向上取整）。
+  // 用户一旦手输，就再也不替它改 —— 与上面表单同一个道理。
+  const [aliveText, setAliveText] = useState<string | null>(null)
+  const [channelsOpen, setChannelsOpen] = useState(false)
+  const [channelRows, setChannelRows] = useState<Record<string, ChannelRowText>>(() => emptyChannelRows())
+  const [selectedChannel, setSelectedChannel] = useState<ChannelId>('undecided')
 
   const { input, errors } = useMemo(
     () => parsePlanText(form, data.settings),
@@ -34,17 +80,36 @@ export function CalculatePage() {
   // 而用户会照着它出门定价 —— 宁可不给数字。
   const result: PlanResult | null = errorKeys.length === 0 ? plan(data.settings, input) : null
 
+  // 存活数决定固定成本摊到几只上。默认值只跟结果走、不跟用户手输的值打架。
+  const aliveRaw = aliveText ?? (result === null ? '1' : String(defaultAliveInput(result.expectedAlive)))
+  const aliveParsed = parseAliveInput(aliveRaw)
+
+  const rows = channelInputsFromRows(channelRows)
+  // 全仓唯一的渠道成本算法，在这里被调用一次。第一个参数就是决策台那个保本价。
+  const breakdown = result !== null && aliveParsed !== null
+    ? compareChannelCosts(result.breakEvenPriceFen, aliveParsed, rows)
+    : null
+
   function set(key: PlanFieldKey) {
     return (value: string) => {
       setForm(prev => ({ ...prev, [key]: value }))
     }
   }
 
+  function setRow(channelId: ChannelId, key: keyof ChannelRowText) {
+    return (value: string) => {
+      setChannelRows(prev => {
+        const current = prev[channelId] ?? EMPTY_ROW
+        return { ...prev, [channelId]: { ...current, [key]: value } }
+      })
+    }
+  }
+
   function handleCreateBatch() {
     const name = `收狗 ${input.n} 只`
     const date = todayLocalIso(new Date())
-    void update(d => createBatchFromPlan(d, input, name, date))
-    setCreated(name)
+    void update(d => createBatchFromPlan(d, input, name, date, selectedChannel))
+    setCreated({ name, channel: selectedChannel })
   }
 
   return (
@@ -146,6 +211,130 @@ export function CalculatePage() {
         </section>
       )}
 
+      {result !== null && (
+        <section className="mt-4 rounded-xl bg-white p-4 shadow-sm">
+          <button
+            type="button"
+            className="flex w-full items-baseline justify-between gap-3 text-left"
+            onClick={() => setChannelsOpen(v => !v)}
+          >
+            <span className="text-sm font-semibold text-gray-700">
+              渠道对照 {channelsOpen ? '▾' : '▸'}
+            </span>
+            <span className="text-right text-xs text-gray-400">
+              同一批狗，走不同的路，最低可卖价不一样。
+            </span>
+          </button>
+
+          {channelsOpen && (
+            <>
+              <div className="mt-2 border-t border-gray-100">
+                <Field
+                  label="存活数（固定成本摊到几只上）"
+                  value={aliveRaw}
+                  onChange={setAliveText}
+                  suffix="只"
+                  inputMode="numeric"
+                  error={aliveParsed === null ? '存活数要填一个整数（几只狗）' : undefined}
+                />
+              </div>
+
+              <label className="mt-3 flex items-start gap-2 rounded-lg bg-gray-50 p-3">
+                <input
+                  type="radio"
+                  name="plannedChannel"
+                  className="mt-0.5"
+                  checked={selectedChannel === 'undecided'}
+                  onChange={() => setSelectedChannel('undecided')}
+                />
+                <span className="text-xs text-gray-500">
+                  <span className="text-sm font-semibold text-gray-700">未定</span>
+                  <span className="ml-2">还没定就选这个，存批次时去向记「未定」。</span>
+                </span>
+              </label>
+
+              {breakdown === null ? (
+                <p className="mt-3 text-xs text-red-500">
+                  存活数填的不是整数（几只狗只能是整数），改好才能算渠道对照。
+                </p>
+              ) : (
+                <table className="mt-3 w-full text-xs">
+                  <thead>
+                    <tr className="text-gray-400">
+                      <th className="text-left font-normal">走哪条路</th>
+                      <th className="text-left font-normal">价格假设（元）</th>
+                      <th className="text-right font-normal">算出来</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {comparisonChannels().map(c => {
+                      const row = channelRows[c.id] ?? EMPTY_ROW
+                      const parsed = rows.find(r => r.channelId === c.id)
+                      const b = breakdown.find(x => x.channelId === c.id) ?? null
+                      const bad = parsed?.invalid === true
+                      return (
+                        <tr
+                          key={c.id}
+                          className={`border-t border-gray-100 align-top ${b?.isLoss ? 'bg-red-50' : ''}`}
+                        >
+                          <td className="py-2 pr-2">
+                            <label className="flex items-start gap-1.5">
+                              <input
+                                type="radio"
+                                name="plannedChannel"
+                                className="mt-0.5"
+                                checked={selectedChannel === c.id}
+                                onChange={() => setSelectedChannel(c.id)}
+                              />
+                              <span>
+                                <span className="block text-sm text-gray-700">{c.name}</span>
+                                <span className="mt-0.5 block text-[10px] leading-tight text-gray-400">
+                                  {c.note}
+                                </span>
+                              </span>
+                            </label>
+                          </td>
+                          <td className="py-2 pr-2">
+                            <div className="flex flex-col gap-1">
+                              <MiniMoney label="预期单价" value={row.unitPrice} onChange={setRow(c.id, 'unitPrice')} />
+                              <MiniMoney label="每只额外" value={row.extraPerDog} onChange={setRow(c.id, 'extraPerDog')} />
+                              <MiniMoney label="该渠道固定" value={row.fixedCost} onChange={setRow(c.id, 'fixedCost')} />
+                            </div>
+                            {bad && <div className="mt-1 text-right text-red-500">这不像数字</div>}
+                          </td>
+                          <td className="py-2 text-right">
+                            {bad || b === null ? (
+                              <span className="text-gray-400">—</span>
+                            ) : (
+                              <>
+                                <div className="text-gray-700">保本 {formatMoney(b.breakEvenUnitPriceFen)}</div>
+                                <div className={`font-semibold ${b.isLoss ? 'text-red-500' : 'text-emerald-600'}`}>
+                                  {b.isLoss
+                                    ? `亏 ${formatMoney(Math.abs(b.perDogProfitFen))}`
+                                    : `赚 ${formatMoney(b.perDogProfitFen)}`}
+                                </div>
+                                <div className="text-[10px] text-gray-400">
+                                  固定成本每只摊 {formatMoney(b.fixedPerDogFen)}
+                                </div>
+                              </>
+                            )}
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              )}
+
+              <p className="mt-2 text-xs text-gray-400">
+                底价用的是上面那个保本价（{formatMoney(result.breakEvenPriceFen)}）。
+                固定成本按上面的存活数摊到每只身上 —— 摊位费填多少，这里就摊多少。
+              </p>
+            </>
+          )}
+        </section>
+      )}
+
       <button
         type="button"
         onClick={handleCreateBatch}
@@ -157,7 +346,7 @@ export function CalculatePage() {
 
       {created && (
         <p className="mt-2 text-center text-xs text-emerald-600">
-          已建批次「{created}」，到「狗」标签页记账。
+          已建批次「{created.name}」，去向「{channelName(created.channel)}」。到「狗」标签页记账。
         </p>
       )}
     </div>
