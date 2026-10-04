@@ -4606,6 +4606,7 @@ export function setBatchChannel(data: AppData, batchId: string, channel: Channel
 - Modify: `src/ui/pages/ReportPage.tsx`（底部加备份面板）
 - Modify: `index.html`（`<head>` 里加 manifest 与 apple-touch-icon）
 - Create: `DEPLOY.md`
+- Modify: `README.md`（**还是 Vite 样板文，上线前必须换成这个项目自己的说明，见 Step 9b**）
 
 > `public/icon-192.png` 与 `public/icon-512.png` 是**二进制 PNG**，纯文本工具写不出来——必须用能生成图片的方式产出（例如 Node 脚本生成，或从现有图形导出），不要把 PNG 的字节当文本往里写。
 
@@ -4922,6 +4923,19 @@ npm run build      # 产物在 dist/
 3. 把链接发给伙伴，告诉他这是给你俩看账用的，数据以你手机上的为准。
 ```
 
+- [ ] **Step 9b: 把 README.md 换成这个项目自己的说明**
+
+`README.md` 现在还是 Vite 脚手架的样板文（「# React + TypeScript + Vite」+ React Compiler 那几段），上线前必须换掉——它是这个仓库唯一一份对外的门面，留着样板文等于告诉别人「这是一次 `npm create vite` 出来的东西，没人管」。
+
+写一份**简短**的（20~40 行足够，不要写成论文），至少包含：
+1. 一句话说清这是什么：**给两个合伙人记犬只买卖账的手机网页**，装到桌面像 App，数据只存在自己手机上（不联网、不上传）。
+2. 五个标签页各是干什么的（算 / 狗 / 检 / 钱 / 报），每页一句话。
+3. 本地怎么跑：`npm ci` → `npm run dev`；四条门禁命令 `npx vitest run` / `npm run build` / `npm run lint`。
+4. **数据在哪、怎么备份**：数据在浏览器 IndexedDB 里，清浏览器数据就没了 ⇒ 去「报」页导出备份文件、存到微信「文件传输助手」。
+5. 指向 `DEPLOY.md` 与 `docs/compliance/`（合规调研三份文档，说明为什么要记检疫证明）。
+
+**不要**在 README 里编造功能（比如「支持多人同步」「云端备份」——这两件事本工具明确不做，见设计文档 §1.3 非目标）。**不要**把 `docs/superpowers/` 里的实现计划或 `DEPLOY.md` 的内容整段抄进来——README 是给用户/未来的自己看的门面，不是开发日志。
+
 - [ ] **Step 10: 全量验证**
 
 Run: `npx vitest run`
@@ -4942,8 +4956,8 @@ Expected: `Found 0 warnings and 0 errors.`
 `git add` 的路径必须逐字列出，**不许用 `git add -A` / `git add .` / `git add src`**（见 Global Constraints 与 Task 18/19 的同一要求）。本任务应为：
 
 ```bash
-git add src/ui/backupStatus.ts src/ui/backupStatus.test.ts src/ui/components/BackupBanner.tsx src/ui/pages/BackupPanel.tsx src/App.tsx src/ui/pages/ReportPage.tsx index.html public/manifest.webmanifest public/icon-192.png public/icon-512.png DEPLOY.md
-git commit -m "feat: 备份安全网、PWA 清单与部署说明"
+git add src/ui/backupStatus.ts src/ui/backupStatus.test.ts src/ui/components/BackupBanner.tsx src/ui/pages/BackupPanel.tsx src/App.tsx src/ui/pages/ReportPage.tsx index.html public/manifest.webmanifest public/icon-192.png public/icon-512.png DEPLOY.md README.md
+git commit -m "feat: 备份安全网、PWA 清单、部署说明与项目 README"
 ```
 
 ---
