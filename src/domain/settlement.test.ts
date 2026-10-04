@@ -92,4 +92,29 @@ describe('validateSettings', () => {
   it('病死犬处理费为负时报错', () => {
     expect(validateSettings({ ...DEFAULT_SETTINGS, disposalPerDog: -1 })).toBe('病死犬处理费不能为负')
   })
+
+  // 检疫相关的天数：为负的话「检」页面上的日期会倒着算（等待期变成负数，
+  // 刚接种的狗会被判成「可以送检」）。与上面两条一样用 `!(x >= 0)` 的写法，
+  // 这样 `NaN` 也拦得住。
+  it('狂犬免疫后等待天数为负时报错', () => {
+    expect(validateSettings({ ...DEFAULT_SETTINGS, rabiesWaitDays: -1 }))
+      .toBe('狂犬免疫后等待天数不能为负')
+  })
+
+  it('检疫申报提前天数为负时报错', () => {
+    expect(validateSettings({ ...DEFAULT_SETTINGS, quarantineLeadDays: -1 }))
+      .toBe('检疫申报提前天数不能为负')
+  })
+
+  it('★ 天数是 NaN 时报错（`x < 0` 拦不住 NaN，`!(x >= 0)` 才拦得住）', () => {
+    expect(validateSettings({ ...DEFAULT_SETTINGS, rabiesWaitDays: NaN }))
+      .toBe('狂犬免疫后等待天数不能为负')
+    expect(validateSettings({ ...DEFAULT_SETTINGS, quarantineLeadDays: NaN }))
+      .toBe('检疫申报提前天数不能为负')
+  })
+
+  it('天数为 0 是合法的（＝不等待）', () => {
+    expect(validateSettings({ ...DEFAULT_SETTINGS, rabiesWaitDays: 0, quarantineLeadDays: 0 }))
+      .toBeNull()
+  })
 })

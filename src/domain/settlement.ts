@@ -58,5 +58,9 @@ export function validateSettings(settings: Settings): string | null {
   }
   if (!(settings.quarantinePerDog >= 0)) return '检疫费不能为负'
   if (!(settings.disposalPerDog >= 0)) return '病死犬处理费不能为负'
+  // 天数用 `!(x >= 0)` 而不是 `x < 0`：`NaN` 只有前者拦得住，
+  // 而 NaN 天的等待期会让「检」页面把刚接种的狗判成「可以送检」。
+  if (!(settings.rabiesWaitDays >= 0)) return '狂犬免疫后等待天数不能为负'
+  if (!(settings.quarantineLeadDays >= 0)) return '检疫申报提前天数不能为负'
   return null
 }

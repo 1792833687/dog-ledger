@@ -15,7 +15,7 @@ import { parseMortalityPercent } from './planForm'
  */
 
 /** 数字输入框的种类。拼错不会静默通过（`inputError` 是穷尽 switch）。 */
-export type InputKind = 'ratio' | 'margin' | 'mortality' | 'money'
+export type InputKind = 'ratio' | 'margin' | 'mortality' | 'money' | 'days'
 
 /** 输入框文本 -> 数字。空串与不是数字的（含 `1e999`）都返回 `null`。 */
 function parseNumber(raw: string): number | null {
@@ -71,6 +71,13 @@ export function applyMoneyInput(raw: string): { draft: string; fen: Money | null
   return { draft: raw, fen }
 }
 
+/** 天数的解析与显示。空串、非数字、负数、非整数都不收。 */
+export function applyDaysInput(raw: string): { draft: string; days: number | null } {
+  const n = parseNumber(raw)
+  if (n === null || n < 0 || !Number.isInteger(n)) return { draft: raw, days: null }
+  return { draft: raw, days: n }
+}
+
 /**
  * 这个框下面要不要显示红字。返回 `undefined` 表示合法（`Field` 的 `error` prop 就是不传）。
  *
@@ -78,6 +85,7 @@ export function applyMoneyInput(raw: string): { draft: string; fen: Money | null
  * 自己填错了 —— 错的数字比没有数字危险得多。文案与 `src/ui/planForm.ts:142` 逐字相同。
  * 比例越界不算输入错误，由页面底部那句 `validateSettings` 的红字去说
  * （分成比例之和必须等于 100%），一个框一条红字比两处报同一件事清楚。
+ * 天数同理算输入错误（拒绝就得出红字）。
  */
 export function inputError(kind: InputKind, raw: string): string | undefined {
   const text = raw.trim()
@@ -91,6 +99,14 @@ export function inputError(kind: InputKind, raw: string): string | undefined {
     }
     case 'mortality':
       return parseMortalityPercent(text) === null ? '死亡率要填 0 到 99 之间的数字' : undefined
+    case 'days': {
+      const n = parseNumber(text)
+      // 空串已在上面拦掉（返回 undefined）——`Number('') === 0` 的坑就在这里挡住的。
+      if (n === null) return '天数要填一个数字，例如 21'
+      if (n < 0) return '天数不能是负数'
+      if (!Number.isInteger(n)) return '天数要填整数，例如 21'
+      return undefined
+    }
     case 'ratio':
     case 'margin':
       return parseNumber(text) === null ? '填一个数字，例如 30 或 30.5' : undefined

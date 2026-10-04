@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
-  formatPercent, applyPercentInput, applyMortalityInput, applyMoneyInput, inputError,
+  formatPercent, applyPercentInput, applyMortalityInput, applyMoneyInput, applyDaysInput, inputError,
 } from './settingsForm'
 // 只读的参考实现：「算」页的死亡率解析规则。用来钉「两个页面同一个输入同一个结论」。
 import { parseMortalityPercent } from './planForm'
@@ -114,11 +114,68 @@ describe('applyMoneyInput：检疫费 / 处理费（单位分）', () => {
   })
 })
 
+describe('applyDaysInput：狂犬免疫后等待天数 / 申报检疫提前天数', () => {
+  it('非负整数：草稿是你打的字，值就是那个数', () => {
+    expect(applyDaysInput('21')).toEqual({ draft: '21', days: 21 })
+    expect(applyDaysInput('3')).toEqual({ draft: '3', days: 3 })
+    expect(applyDaysInput('0')).toEqual({ draft: '0', days: 0 })
+  })
+
+  it('★★ 空串 → days 是 null，绝不是 0（Number("") === 0 这个坑）', () => {
+    // 清空「狂犬免疫后等待天数」时如果把空串当成 0，等待天数会被**静默写成 0**：
+    // 「检」页面立刻把刚接种的狗判成「可以送检」，用户会拿着还没到免疫期的狗去申报检疫。
+    expect(applyDaysInput('')).toEqual({ draft: '', days: null })
+    expect(applyDaysInput('   ').days).toBeNull()
+  })
+
+  it('★ 非数字与不是有限数的（含 1e999）都不收', () => {
+    expect(applyDaysInput('abc')).toEqual({ draft: 'abc', days: null })
+    expect(applyDaysInput('2o').days).toBeNull()
+    expect(applyDaysInput('1e999').days).toBeNull()
+  })
+
+  it('★ 负数不收（等待天数为负会让「检」页面倒着算日期）', () => {
+    expect(applyDaysInput('-1')).toEqual({ draft: '-1', days: null })
+    expect(applyDaysInput('-1').days).toBeNull()
+  })
+
+  it('★ 非整数不收（第 21.5 天不存在；拒绝而不是悄悄截断成 21）', () => {
+    expect(applyDaysInput('21.5')).toEqual({ draft: '21.5', days: null })
+    expect(applyDaysInput('0.5').days).toBeNull()
+  })
+
+  it('★ 草稿永远原样保留：打「2」再打「1」的中间态不被改写', () => {
+    // 中间的 '2' 本身是合法输入（会写账 2）—— 这是用户正在改，不是 bug。
+    // 要钉住的是「框里显示的字」永远等于用户打的字：连打「2」再打「1」时，
+    // 第一步的草稿必须是 '2'，而不是回写账上的 21 或空串。
+    expect(applyDaysInput('2')).toEqual({ draft: '2', days: 2 })
+    expect(applyDaysInput('21')).toEqual({ draft: '21', days: 21 })
+    // 整数字段没有「小数点后还没打完」这件事：`Number('2.')` 就是 2（有限整数），
+    // 所以收下并写账 2；被拒的那几种（21.5 / -1 / abc / 空串）上面各有各的用例。
+    expect(applyDaysInput('2.')).toEqual({ draft: '2.', days: 2 })
+  })
+})
+
 describe('inputError：什么时候该在输入框下面显示红字', () => {
   it('空输入不算错（还没开始填）', () => {
     expect(inputError('money', '')).toBeUndefined()
     expect(inputError('ratio', '  ')).toBeUndefined()
     expect(inputError('mortality', '')).toBeUndefined()
+    expect(inputError('days', '')).toBeUndefined()
+  })
+
+  it('★ 天数：空串没有红字（不是错，只是没写账）；非数字 / 负数 / 非整数各有各的话', () => {
+    expect(inputError('days', '')).toBeUndefined()
+    expect(inputError('days', '  ')).toBeUndefined()
+    expect(inputError('days', 'abc')).toBe('天数要填一个数字，例如 21')
+    expect(inputError('days', '-1')).toBe('天数不能是负数')
+    expect(inputError('days', '21.5')).toBe('天数要填整数，例如 21')
+  })
+
+  it('★ 天数的合法输入没有红字', () => {
+    expect(inputError('days', '21')).toBeUndefined()
+    expect(inputError('days', '0')).toBeUndefined()
+    expect(inputError('days', '3')).toBeUndefined()
   })
 
   it('填了但不是数字才算错，且是中文', () => {
@@ -149,22 +206,24 @@ describe('inputError：什么时候该在输入框下面显示红字', () => {
 
 describe('一致性：报了红字的输入绝不会被写进账', () => {
   it('★ 有红字 ⇒ 一个字都不写进账', () => {
-    const samples = ['', '  ', 'abc', '6o', '1200元', '1e999', '0', '60.5', '¥1,200.50', '-5', '120']
+    const samples = ['', '  ', 'abc', '6o', '1200元', '1e999', '0', '60.5', '¥1,200.50', '-5', '120', '21', '21.5']
     for (const raw of samples) {
       if (inputError('ratio', raw) !== undefined) expect(applyPercentInput(raw).ratio).toBeNull()
       if (inputError('margin', raw) !== undefined) expect(applyPercentInput(raw).ratio).toBeNull()
       if (inputError('mortality', raw) !== undefined) expect(applyMortalityInput(raw).ratio).toBeNull()
       if (inputError('money', raw) !== undefined) expect(applyMoneyInput(raw).fen).toBeNull()
+      if (inputError('days', raw) !== undefined) expect(applyDaysInput(raw).days).toBeNull()
     }
   })
 
   it('空输入永远没有红字，也永远不写账', () => {
-    for (const kind of ['ratio', 'margin', 'mortality', 'money'] as const) {
+    for (const kind of ['ratio', 'margin', 'mortality', 'money', 'days'] as const) {
       expect(inputError(kind, '')).toBeUndefined()
     }
     expect(applyPercentInput('').ratio).toBeNull()
     expect(applyMortalityInput('').ratio).toBeNull()
     expect(applyMoneyInput('').fen).toBeNull()
+    expect(applyDaysInput('').days).toBeNull()
   })
 })
 

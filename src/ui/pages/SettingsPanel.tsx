@@ -4,7 +4,7 @@ import { validateSettings } from '../../domain/settlement'
 import { updateSettings, renamePartner, setPartnerRatio, addCostItem } from '../../domain/actions'
 import { Field } from '../components/Field'
 import { fenToTextInput } from '../planForm'
-import { formatPercent, applyPercentInput, applyMortalityInput, applyMoneyInput, inputError } from '../settingsForm'
+import { formatPercent, applyPercentInput, applyMortalityInput, applyMoneyInput, applyDaysInput, inputError } from '../settingsForm'
 
 /**
  * 「设置」面板：合伙人 / 分成比例 / 目标毛利率 / 自定义成本项。
@@ -28,6 +28,9 @@ export function SettingsPanel() {
   const [mortalityDraft, setMortalityDraft] = useState<string | null>(null)
   const [quarantineDraft, setQuarantineDraft] = useState<string | null>(null)
   const [disposalDraft, setDisposalDraft] = useState<string | null>(null)
+  // 两个天数各自一份草稿：清空其中一个不能影响另一个，也不能回写账上的值。
+  const [rabiesWaitDaysDraft, setRabiesWaitDaysDraft] = useState<string | null>(null)
+  const [quarantineLeadDaysDraft, setQuarantineLeadDaysDraft] = useState<string | null>(null)
 
   const s = data.settings
   const error = validateSettings(s)
@@ -148,6 +151,45 @@ export function SettingsPanel() {
       <p className="mt-2 text-xs text-gray-400">
         这两项会预填到「算」页面。填 0 表示还不知道——检疫费与抗体检测价格请先向当地动物卫生监督机构问清。
       </p>
+
+      <h3 className="mt-4 text-sm font-semibold text-gray-700">检疫天数</h3>
+      <div className="mt-2 space-y-2">
+        <Field
+          label="狂犬免疫后等待天数"
+          suffix="天"
+          inputMode="numeric"
+          value={rabiesWaitDaysDraft ?? String(s.rabiesWaitDays)}
+          error={rabiesWaitDaysDraft === null ? undefined : inputError('days', rabiesWaitDaysDraft)}
+          onChange={v => {
+            const { draft, days } = applyDaysInput(v)
+            // 草稿原样写回框里；`days` 是 null（空串 / 非数字 / 负数 / 21.5）时**不写账、只出红字**。
+            // 尤其是空串：`Number('') === 0`，要是当成 0 就会把等待天数静默写成 0，
+            // 「检」页面立刻把刚接种的狗判成「可以送检」。
+            setRabiesWaitDaysDraft(draft)
+            if (days === null) return
+            void update(d => updateSettings(d, { rabiesWaitDays: days }))
+          }}
+        />
+        <p className="text-xs text-gray-400">
+          免疫后要满这个天数才能采血/申报。默认 21 不是法定天数——查过《犬产地检疫规程》与《狂犬病防治技术规范》两份原文，都只写「在有效保护期内」「每年加强免疫一次」，没有具体天数。以给你做抗体检测的实验室和当地动物卫生监督机构的答复为准，问清了就改成真值。
+        </p>
+        <Field
+          label="申报检疫提前天数"
+          suffix="天"
+          inputMode="numeric"
+          value={quarantineLeadDaysDraft ?? String(s.quarantineLeadDays)}
+          error={quarantineLeadDaysDraft === null ? undefined : inputError('days', quarantineLeadDaysDraft)}
+          onChange={v => {
+            const { draft, days } = applyDaysInput(v)
+            setQuarantineLeadDaysDraft(draft)
+            if (days === null) return
+            void update(d => updateSettings(d, { quarantineLeadDays: days }))
+          }}
+        />
+        <p className="text-xs text-gray-400">
+          出售前要提前这么多天申报检疫（《动物检疫管理办法》第八条第二款是三天，《犬产地检疫规程》4.1 也是三天）。
+        </p>
+      </div>
 
       <h3 className="mt-4 text-sm font-semibold text-gray-700">成本项</h3>
       <ul className="mt-1 text-xs text-gray-500">
