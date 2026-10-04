@@ -2,10 +2,35 @@ import { useMemo, useState } from 'react'
 import { useAppData } from '../../state/useAppData'
 import { settle } from '../../domain/settlement'
 import { batchSummary } from '../../domain/costing'
+import { costBreakdown, mortalityTrend } from '../../domain/stats'
 import { formatMoney } from '../../domain/money'
 import { buildReceiptRows, receiptToBlob } from '../receipt'
 import { todayLocalIso } from '../planForm'
 import { SettingsPanel } from './SettingsPanel'
+
+/** `0.2` → `20.0%`。与排行块的死亡率写法保持一致（都是 `toFixed(1)`）。 */
+function percentText(rate: number): string {
+  return `${(rate * 100).toFixed(1)}%`
+}
+
+/**
+ * 与上一批相比的那句文案。
+ *
+ * `null`（第一批）**不等于** `0`（与上一批持平）：前者是「没有上一批可比」，
+ * 后者是「比了，一样」。混成一个 `0%` 会让用户以为第一批是「持平」。
+ */
+function trendDeltaText(delta: number | null): string {
+  if (delta === null) return '首批'
+  if (delta === 0) return '与上一批持平'
+  const points = (Math.abs(delta) * 100).toFixed(1)
+  return delta > 0 ? `比上一批 +${points} 个百分点` : `比上一批 -${points} 个百分点`
+}
+
+/** 死亡率涨了是坏事（红），降了是好事（绿），没有可比对象或持平就低调一点。 */
+function trendDeltaClass(delta: number | null): string {
+  if (delta === null || delta === 0) return 'text-gray-400'
+  return delta > 0 ? 'text-red-500' : 'text-emerald-600'
+}
 
 /**
  * 「报」页面 —— 分账与一键对账单图片。
@@ -31,6 +56,8 @@ export function ReportPage() {
       .sort((a, b) => b.summary.netProfitFen - a.summary.netProfitFen),
     [data],
   )
+  const costs = useMemo(() => costBreakdown(data), [data])
+  const trend = useMemo(() => mortalityTrend(data), [data])
 
   function downloadBlob(blob: Blob, filename: string) {
     const url = URL.createObjectURL(blob)
@@ -176,6 +203,53 @@ export function ReportPage() {
             })}
           </ul>
         </>
+      )}
+
+      <h2 className="mt-6 text-sm font-semibold text-gray-700">钱花在哪了</h2>
+      {costs.length === 0 ? (
+        <p className="mt-2 rounded-xl bg-white p-3 text-xs text-gray-400 shadow-sm">还没有数据</p>
+      ) : (
+        <ul className="mt-2 divide-y divide-gray-100 rounded-xl bg-white shadow-sm">
+          {costs.map(c => (
+            <li key={c.category} className="px-3 py-2 text-sm">
+              <div className="flex items-center justify-between">
+                <span>{c.name}</span>
+                <span className="font-semibold">{formatMoney(c.totalFen)}</span>
+              </div>
+              {/* 占比条：一个分类单独看金额没有意义，「这笔占了全部支出的多少」才是重点 */}
+              <div className="mt-1 flex items-center gap-2">
+                <div className="h-1.5 flex-1 rounded-full bg-gray-100">
+                  <div
+                    className="h-1.5 rounded-full bg-emerald-500"
+                    style={{ width: percentText(c.share) }}
+                  />
+                </div>
+                <span className="w-12 text-right text-xs text-gray-400">{percentText(c.share)}</span>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <h2 className="mt-6 text-sm font-semibold text-gray-700">死亡率趋势</h2>
+      {trend.length === 0 ? (
+        <p className="mt-2 rounded-xl bg-white p-3 text-xs text-gray-400 shadow-sm">还没有数据</p>
+      ) : (
+        <ul className="mt-2 divide-y divide-gray-100 rounded-xl bg-white shadow-sm">
+          {trend.map(p => (
+            <li key={p.batchId} className="px-3 py-2 text-sm">
+              <div>{p.name}</div>
+              <div className="text-xs text-gray-400">
+                {p.date} · {p.total} 只里死了 {p.dead} 只（{percentText(p.rate)}）
+              </div>
+              {/* 这一节存在的理由就是这一行：排行块已经给了同样的三个数，
+                  只有「跟上一批比好还是坏」是这里独有的信息。 */}
+              <div className={`mt-0.5 text-xs ${trendDeltaClass(p.deltaFromPrevious)}`}>
+                {trendDeltaText(p.deltaFromPrevious)}
+              </div>
+            </li>
+          ))}
+        </ul>
       )}
 
       <SettingsPanel />
