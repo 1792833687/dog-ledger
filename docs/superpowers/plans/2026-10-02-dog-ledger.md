@@ -4600,6 +4600,18 @@ export function setBatchChannel(data: AppData, batchId: string, channel: Channel
   git commit -m "feat(ui): 批次改名与默认批次名去重"
   ```
 
+> **Task 21 实施记录（2026-10-03）**
+>
+> - 提交 `ff1e8cb feat(ui): 批次改名与默认批次名去重`（6 files / +213 / −5）：`src/domain/actions.ts` +28（`renameBatch` 在 `:281-307`）、`src/domain/actions.test.ts` +92（7 条新增，93→100）、`src/ui/planForm.ts` +14（`localTimeHm` 在 `:54-66`）、`src/ui/planForm.test.ts` +23（3 条新增，15→18）、`src/ui/pages/DogsPage.tsx` +49、`src/ui/pages/CalculatePage.tsx` +12。
+> - 门禁：`Test Files 21 passed (21)` / `Tests 499 passed (499)`（基线 489）、`✓ 47 modules` / `index-DHbmsN7R.js` 288.58 kB / gzip 87.71 kB、`Found 0 warnings and 0 errors.`（58 files）、`git status --short` 空。TDD 红态：7 × `TypeError: renameBatch is not a function`、3 × `TypeError: localTimeHm is not a function`。
+> - 落点核对：`CalculatePage.tsx:108-118` 逐字就是上面那个代码块，`const now = new Date()` 在 `:112`，一个 `now` 同时喂给批次名与日期。
+> - **`commitBatchName` 必须是箭头函数常量，不能写成 `function` 声明**：`batch` 靠更上面的提前 `return` 收窄，函数声明会被提升、收窄在它体内不成立，`tsc` 立刻报 `error TS18048: 'batch' is possibly 'undefined.'`。谁把它改回函数声明都会编译失败。
+> - `renameBatch` 刻意**不追溯改已有狗的 `code`**（`code` 在建批次时一次写死，是历史标识——对账单与纸质清单已经按它写了；追溯改写会让已发出的凭证对不上账）。上面测试要求里那条「改批次名之后已有狗的 `code` 不变」正是钉这条的。
+> - 偏离（全部已接受或已 parked）：没有「点名字可改」的可见提示（parked——默认名现在带时分，重名已很少见，逃生口不必自我宣传）；改成同名仍写一次库（无害）；**空白提交停在编辑态**并出红字（刻意，静默退出会掩盖「这次编辑被拒了」）；无界面层测试（本仓没有组件测试基建）；「检」页下拉里同名同日期批次仍不可分辨（parked，本任务只做详情视图）。
+> - 真实浏览器走查 45 条断言 **45/45 PASS**（0 `Runtime.exceptionThrown`、0 `console.error`），探针 `.superpowers/sdd/2026-10-02-dog-ledger/probes/dogledger-t21.mjs`。走查抓到**一个真实缺陷**（见下），Task 21b 修掉后复跑 45/45。
+> - **缺陷与修复（Task 21b，提交 `dfaa46a fix(ui): 批次名编辑草稿不跨批次残留`，1 file / +30 / −3）**：`setBatchNameDraft(null)` 原来只在提交成功与按 Escape 两处发生，而改 `openBatchId` 的**三处**（列表里打开批次、批次失效 fallback 里的退回按钮、详情视图顶部的「← 所有批次」）都没重置草稿。点「返回」时输入框先失焦 ⇒ 非空草稿会被**提交**（所以打字后返回不会泄漏），但**空白分支提前 `return`、走不到清草稿** ⇒ 空草稿跨到下一个批次：那个批次一进详情就是空的编辑框，外加一句属于上一个批次的红字「批次名不能是空的」。**库里一个字都没改**，纯粹是界面状态串台，但用户会以为第二个批次的名字坏了。修法：三处改 `openBatchId` 时同时 `setBatchNameDraft(null)`，并在 `batchNameDraft` 的状态注释里写清理由（草稿只属于它所属的那个批次）。另发现 fallback 里那句按钮文案是「← 回所有批次」（详情视图顶部才是「← 所有批次」）。
+> - 教训：**给实施者点名的行号会过期。** 上面第 3 条里「`:171-189` 是去向下拉，一个字都不要动」在 Task 21 落地后已经偏到 `commitBatchName` 的注释与函数体上（真正的去向 `<select>` 现在是 `:216-229`），实施者为此专门请示。往后写 brief 要写清**哪一段语义**，行号只当参考。
+
 ---
 
 ### Task 14: 备份安全网 + PWA + 上线
