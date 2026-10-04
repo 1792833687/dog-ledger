@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import type { AppData, Batch, ChannelId, Dog, LedgerEntry } from './types'
 import { DEFAULT_DATA } from './types'
 import { aliveCount, batchPerDogCostFen } from './costing'
-import { compareChannels } from './channels'
+import { compareChannels, compareChannelCosts } from './channels'
 import type { ChannelInput } from './channels'
 
 function makeBatch(over: Partial<Batch> = {}): Batch {
@@ -195,5 +195,68 @@ describe('compareChannels —— 边界', () => {
     expect(rows[0].channelId).toBe('taobao_live')
     expect(rows[0].name).toBe('taobao_live')
     expect(rows[0].breakEvenUnitPriceFen).toBeCloseTo(584000 / 6 + 3000, 6)
+  })
+})
+
+describe('compareChannelCosts —— 包装层与核心同参同结果', () => {
+  it('compareChannels 就是「从账本取数 + compareChannelCosts」，结果深度相等', () => {
+    const data = scenarioData()
+    const inputs = [
+      input('undecided', { unitPriceFen: 100000 }),
+      input('ecommerce', { unitPriceFen: 100000, extraPerDogFen: 2000, fixedCostFen: 12000 }),
+      input('dog_market', { unitPriceFen: 90000, fixedCostFen: 5000 }),
+    ]
+    expect(compareChannels(data, 'b1', inputs)).toEqual(
+      compareChannelCosts(batchPerDogCostFen(data, 'b1'), aliveCount(data, 'b1'), inputs),
+    )
+  })
+
+  it('整批死光时包装层与核心也一致（两条路都是 base 0）', () => {
+    const data = scenarioData()
+    data.dogs.forEach(d => { d.status = 'dead' })
+    const inputs = [input('rural_fair', { unitPriceFen: 50000, fixedCostFen: 30000 })]
+    expect(compareChannels(data, 'b1', inputs)).toEqual(compareChannelCosts(0, 0, inputs))
+  })
+})
+
+describe('compareChannelCosts —— 核心的边界', () => {
+  it('basePerDogCostFen 原样透传，不乘不除也不取整', () => {
+    const [row] = compareChannelCosts(12345.678, 3.5, [input('undecided')])
+    expect(row.basePerDogCostFen).toBe(12345.678)
+    expect(row.breakEvenUnitPriceFen).toBe(12345.678)
+  })
+
+  it('底价原样透传：固定成本另摊，不参与底价的缩放', () => {
+    const [row] = compareChannelCosts(12345.678, 3.5, [input('dog_market', { fixedCostFen: 7000 })])
+    expect(row.fixedPerDogFen).toBe(7000 / 3.5)
+    expect(row.breakEvenUnitPriceFen).toBe(12345.678 + 2000)
+  })
+
+  it('aliveDogCount 允许小数（plan() 的 expectedAlive 就是小数），不取整', () => {
+    const [row] = compareChannelCosts(0, 3.5, [input('dog_market', { fixedCostFen: 10000 })])
+    expect(row.fixedPerDogFen).toBe(10000 / 3.5)
+    expect(row.fixedPerDogFen).toBeCloseTo(2857.142857142857, 6)
+  })
+
+  it('aliveDogCount === 0：不除零、不抛错，保本价 = 底价 + extra', () => {
+    const rows = compareChannelCosts(88888.5, 0, [
+      input('meat', { unitPriceFen: 90000, extraPerDogFen: 300, fixedCostFen: 99999 }),
+      input('undecided'),
+    ])
+    expect(rows[0].fixedPerDogFen).toBe(0)
+    expect(rows[0].breakEvenUnitPriceFen).toBe(88888.5 + 300)
+    expect(rows[0].perDogProfitFen).toBe(90000 - (88888.5 + 300))
+    expect(rows[0].isLoss).toBe(false)
+    expect(rows[1].breakEvenUnitPriceFen).toBe(88888.5)
+  })
+
+  it('顺序与 inputs 一致、未知 channelId 回落为字符串，都在核心层', () => {
+    const rows = compareChannelCosts(1000, 2, runtimeInputs(
+      '[{"channelId":"taobao_live","unitPriceFen":1500,"extraPerDogFen":0,"fixedCostFen":0},'
+      + '{"channelId":"pet_shop","unitPriceFen":1500,"extraPerDogFen":0,"fixedCostFen":0}]',
+    ))
+    expect(rows.map(r => r.channelId)).toEqual(['taobao_live', 'pet_shop'])
+    expect(rows[0].name).toBe('taobao_live')
+    expect(rows[1].name).toBe('宠物店 / 宠物医院')
   })
 })

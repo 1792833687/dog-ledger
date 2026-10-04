@@ -1,4 +1,4 @@
-import type { AppData, Batch, CostItemDef, Dog, DogStatus, LedgerEntry, Money, Settings } from './types'
+import type { AppData, Batch, ChannelId, CostItemDef, Dog, DogStatus, LedgerEntry, Money, Settings } from './types'
 import { newId } from './types'
 
 /**
@@ -259,5 +259,21 @@ export function addCostItem(data: AppData, name: string, scope: CostItemDef['sco
   return {
     ...data,
     settings: { ...data.settings, costItems: [...data.settings.costItems, item] },
+  }
+}
+
+/**
+ * 改一个批次的「计划去向」。找不到这个批次时原样返回（同一引用）。
+ * 只改这一个批次的这个字段，别的批次、狗、流水一律不动，数组顺序不变。
+ *
+ * **不校验** `channel` 是否在 `SALES_CHANNELS` 里：与 `addCostItem` 不给 `name` 做
+ * `trim`/去重同一个道理 —— 域层保持宽松，合法值由界面负责给。旧备份或手改过的数据
+ * 读进来的未知渠道会被原样存下，界面自己按「查不到就显示 id」处理（见 `channels.ts`）。
+ */
+export function setBatchChannel(data: AppData, batchId: string, channel: ChannelId): AppData {
+  if (!data.batches.some(b => b.id === batchId)) return data
+  return {
+    ...data,
+    batches: data.batches.map(b => (b.id === batchId ? { ...b, plannedChannel: channel } : b)),
   }
 }

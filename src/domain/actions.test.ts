@@ -3,7 +3,7 @@ import { DEFAULT_DATA, BUILTIN_COST_ITEMS } from './types'
 import {
   setDogStatus, sellDog, markDogDead, addExpense, createBatch,
   addInjection, addIncome, addReimbursement, addDistribution, setDogQuarantine,
-  updateSettings, renamePartner, setPartnerRatio, addCostItem,
+  updateSettings, renamePartner, setPartnerRatio, addCostItem, setBatchChannel,
 } from './actions'
 import { batchSummary, dogIncome, dogOwnCost, batchTotalCost, dogProfitFen } from './costing'
 import { poolBalance, advanceBalance, contributedCapital, distributedTo } from './ledger'
@@ -834,5 +834,60 @@ describe('设置类动作', () => {
     expect(itemsBefore).toBe(BUILTIN_COST_ITEMS.length)
     expect(data.settings.partners[0].shareRatio).toBe(0.5)
     expect(data.settings.costItems).toHaveLength(itemsBefore)
+  })
+})
+
+describe('setBatchChannel', () => {
+  it('改一个批次的计划去向', () => {
+    const data = createBatch(DEFAULT_DATA, '一批', '2026-10-03')
+    const next = setBatchChannel(data, data.batches[0].id, 'pet_shop')
+    expect(next.batches[0].plannedChannel).toBe('pet_shop')
+  })
+
+  it('只换那一个批次对象，其余批次连引用都不换、顺序不变', () => {
+    let data = createBatch(DEFAULT_DATA, '一', '2026-10-03')
+    data = createBatch(data, '二', '2026-10-04')
+    data = createBatch(data, '三', '2026-10-05')
+    const before = data.batches
+    const next = setBatchChannel(data, before[1].id, 'meat')
+    expect(next.batches).toHaveLength(3)
+    expect(next.batches[0]).toBe(before[0])
+    expect(next.batches[1]).not.toBe(before[1])
+    expect(next.batches[2]).toBe(before[2])
+    expect(next.batches.map(b => b.name)).toEqual(['一', '二', '三'])
+    expect(next.batches[1].plannedChannel).toBe('meat')
+    expect(next.batches[1].id).toBe(before[1].id)
+    expect(next.batches[1].name).toBe('二')
+  })
+
+  it('dogs / entries / settings 一律不动（连引用都不换）', () => {
+    const data = sellSeed()
+    const next = setBatchChannel(data, data.batches[0].id, 'individual')
+    expect(next.dogs).toBe(data.dogs)
+    expect(next.entries).toBe(data.entries)
+    expect(next.settings).toBe(data.settings)
+  })
+
+  it('批次不存在时原样返回同一引用', () => {
+    const data = sellSeed()
+    expect(setBatchChannel(data, 'no-such-batch', 'meat')).toBe(data)
+  })
+
+  it('改两个不同批次互不影响', () => {
+    let data = createBatch(DEFAULT_DATA, '一', '2026-10-03')
+    data = createBatch(data, '二', '2026-10-04')
+    const [b1, b2] = data.batches
+    const next = setBatchChannel(setBatchChannel(data, b1.id, 'kennel'), b2.id, 'ecommerce')
+    expect(next.batches[0].plannedChannel).toBe('kennel')
+    expect(next.batches[1].plannedChannel).toBe('ecommerce')
+    expect(data.batches[0].plannedChannel).toBe('undecided')
+  })
+
+  it('不修改传入的 data 本身', () => {
+    const data = createBatch(DEFAULT_DATA, '一批', '2026-10-03')
+    const id = data.batches[0].id
+    setBatchChannel(data, id, 'rural_fair')
+    expect(data.batches[0].plannedChannel).toBe('undecided')
+    expect(DEFAULT_DATA.batches).toHaveLength(0)
   })
 })
