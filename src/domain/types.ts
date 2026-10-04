@@ -37,7 +37,7 @@ export interface SalesChannelDef {
 export const SALES_CHANNELS: SalesChannelDef[] = [
   { id: 'undecided', name: '未定', note: '还没决定这批走哪条路，任何渠道的保本价都只能当参考。' },
   { id: 'pet_shop', name: '宠物店 / 宠物医院', note: '卖断给店主，几乎无额外成本，但对方压价最狠。' },
-  { id: 'dog_market', name: '犬只交易市场 / 花鸟市场', note: '摊位费按次摊；城区是否禁活体交易必须先本地核实。' },
+  { id: 'dog_market', name: '犬只交易市场 / 花鸟市场', note: '摊位费按次摊；城区是否禁活体交易必须先本地核实。从市场转手时要能拿出原始检疫证明和完整进出场记录（《犬产地检疫规程》4.1.3）。' },
   { id: 'rural_fair', name: '农村大集 / 集市', note: '门槛最低、价格最低，受集期限制。' },
   { id: 'middleman', name: '狗贩子 / 中间商', note: '最省事、价格最低；申报义务仍在出售人身上。' },
   { id: 'individual', name: '直接卖给个人', note: '单价最高，但要承担退狗与售后。' },
