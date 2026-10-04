@@ -4134,6 +4134,86 @@ export function compareChannels(data: AppData, batchId: string, inputs: ChannelI
 > 裁定 2 —— **`ChannelBreakdown` 不回显 `unitPriceFen`，保持逐字 interface，不加字段。** Task 18 渲染时输入数组 `inputs` 与结果数组按下标一一对应（行为 5 已把「顺序与 `inputs` 一致、不排序」钉成测试），界面拿得到两边，不需要回显。**但这是一处真实的耦合**：将来若有人给 `compareChannels` 加上排序或过滤，按下标配对就会错——所以「顺序与输入一致」这条测试必须一直在。若 Task 18 实施时发现按下标配对确实别扭，**那时再单独开一次接口改动**，不预先加字段。
 > 观察（无需处理）：`dilutedCostFen` 里 `:64` 的 `const alive` 现在只服务 `:65` 的 0 判断，整批死光时 `aliveCount` 被调用两次；行为不变、开销可忽略（brief 明令只改第 55 行）。
 > 遗留（控制器已核实，属设计选择非缺陷）：`channelId` 在类型上是 `ChannelId` 联合，但 **`Money = number` 且 `paidBy`/`category` 一样没有字面量保护**——运行期未知值只能靠回落分支兜住，不靠类型。
+> **后续（同日）：Task 18 派发前审计发现 `compareChannels` 在「还没有真实批次」的场景下取不到数（存活数为 0 ⇒ 底价与固定成本摊薄双双退化成 0），因此紧接着开了 → Task 16b**：把渠道算法拆成核心 `compareChannelCosts(basePerDogCostFen, aliveDogCount, inputs)` + 三行包装 `compareChannels`。**本任务的 15 个测试在 16b 里一字不改地继续通过**，本任务的所有行为与结论保持有效；16b 只是给了同一个算法第二种取数方式。`ChannelBreakdown` 仍然不加字段。
+
+---
+
+### Task 16b: 渠道算法的唯一入口 + 批次「计划去向」动作
+
+**Goal:** 让「算」页面能在**还没有真实批次**的情况下用同一套渠道算法，并且让批次详情能改计划去向。
+
+**为什么有这一组任务（Task 18 派发前审计发现的三处缺口，控制器 2026-10-03 补）**
+
+Task 18 要在「算」页面上做渠道对照，可是那时候**一只狗都还没买**。Task 16 交给的 `compareChannels(data, batchId, inputs)` 是从账本里现取两个数：存活数 `aliveCount(data, batchId)` 与每只成本 `batchPerDogCostFen(data, batchId)`。**「算」页面上这两个数都取不出来**：
+
+- 还没有真实批次 → 存活数是 0 → `batchPerDogCostFen` 的 `alive === 0` 分支直接 `return 0`（`src/domain/costing.ts:51`），**每只底价算成 0**；
+- 就算现造一个临时批次，账本里也没有支出流水 → `batchTotalCost` 是 0 → 底价还是 0。
+
+于是 Task 18 的任务书原来写的那套「造一个临时 `AppData`、里面塞一条金额 = 每只成本 × N 的支出流水、再调 `compareChannels`」**根本算不出正确的数**：临时批次里没有狗，`aliveCount` 是 0，`fixedPerDogFen` 恒为 0、底价恒为 0——**用户填的固定成本（摊位费）会静默不起作用**，而这不报错、不标红，是最坏的一类错。而且那种写法还会逼着界面自己算 `每只成本 × N`，正是 Task 18 行为 5 明令不许出现的第二套成本公式。
+
+真正的模型是：**「预估能活几只」是这次计划的一个输入，不是能从数据库里查出来的事实。** 所以把渠道算法拆成「核心」+「从账本取数的薄包装」两层，核心显式接收这两个数。「算」页面直接传 `plan()` 已经算好的数；批次详情以后要按真实批次对照时，仍走 `compareChannels` 包装层。**算法仍然只有一处**（`compareChannelCosts`），这条不变。
+
+另外两个缺口：`src/domain/actions.ts` 里**没有任何能改 `Batch` 字段的动作**（只有 `createBatch` 与狗的增删改、钱的动作、设置的动作），所以 Task 18 行为 7 的「计划去向可改」写不出来；`channelName`（渠道 id → 中文名）目前也不存在，`src/ui/pages/DogsPage.tsx:171` 正在把英文 id 直接显示给用户（`去向：pet_shop`）——**这是现存缺陷**，本任务给动作，Task 18 修显示。
+
+**Files:**
+- Modify: `src/domain/channels.ts`
+- Modify: `src/domain/channels.test.ts`
+- Modify: `src/domain/actions.ts`（**只在文件末尾追加**，已有 15 个导出函数一字不动；第 2 行 `import { newId } from './types'` 必须留着）
+- Modify: `src/domain/actions.test.ts`
+
+**Consumes:** `aliveCount` / `batchPerDogCostFen`（`src/domain/costing.ts`）；`SALES_CHANNELS` / `ChannelId` / `AppData`（`src/domain/types.ts`）。
+
+**Interfaces（逐字）:**
+
+```ts
+/**
+ * 渠道对照的核心：给定「每只存活狗的底价」与「存活只数」，算各渠道的保本单价与每只利润。
+ * 这是全仓唯一的渠道成本算法 —— compareChannels 只是从账本里取出这两个数再调它。
+ * 「算」页面还没有真实批次时直接调它，不要造临时 AppData、不要造假狗。
+ */
+export function compareChannelCosts(
+  basePerDogCostFen: number,
+  aliveDogCount: number,
+  inputs: readonly ChannelInput[],
+): ChannelBreakdown[]
+
+/** 从账本取数后调 compareChannelCosts。真实批次（已有狗、已有支出）走这条。 */
+export function compareChannels(data: AppData, batchId: string, inputs: ChannelInput[]): ChannelBreakdown[]
+
+/**
+ * 改一个批次的「计划去向」。找不到这个批次时原样返回（同一引用）。
+ * 只改这一个批次的这个字段，别的批次、狗、流水一律不动，数组顺序不变。
+ */
+export function setBatchChannel(data: AppData, batchId: string, channel: ChannelId): AppData
+```
+
+**必须满足的行为:**
+
+1. `compareChannels(data, batchId, inputs)` 的返回值必须**与 `compareChannelCosts(batchPerDogCostFen(data, batchId), aliveCount(data, batchId), inputs)` 深度相等**——这是「包装层没有第二套算法」的回归断言，必须有测试。
+2. `compareChannels` 现有 15 个测试**一字不改地**全部通过（它们测的是外部行为，重构不该动它们）。
+3. `compareChannelCosts` 用 `aliveDogCount` 摊固定成本：`fixedPerDogFen = aliveDogCount === 0 ? 0 : fixedCostFen / aliveDogCount`（0 不除零、不抛错）。
+4. `basePerDogCostFen` **原样透传**，不做任何再加工、不与 `aliveDogCount` 相乘或相除。
+5. `breakEvenUnitPriceFen = basePerDogCostFen + extraPerDogFen + fixedPerDogFen`；`perDogProfitFen = unitPriceFen - breakEvenUnitPriceFen`；`isLoss = perDogProfitFen < 0`（等于 0 不算亏）——与 Task 16 完全一致，**这三条算式全仓只能出现在 `compareChannelCosts` 里**。
+6. 返回顺序与 `inputs` 一致（不排序）；`name` 从 `SALES_CHANNELS` 查、查不到回落为 `channelId` 字符串本身。
+7. `aliveDogCount` **允许是小数**（`plan()` 的 `expectedAlive` 就是小数，`planning.ts:52`），不要取整、不要夹取。
+8. `setBatchChannel`：批次存在 → 返回新的 `AppData`，只有那一个 `batch.plannedChannel` 变，`batches` 数组顺序与其余元素引用不变；批次不存在 → 返回**同一引用**；`dogs`/`entries`/`settings` 一律不动。
+9. `setBatchChannel` **不校验 `channel` 是否在 `SALES_CHANNELS` 里**（与 `addCostItem` 不 trim、不去重同一风格：宽松的域层，界面负责给合法值）——但要在注释里写明这一点，因为将来从旧备份/手改数据读进来的未知值会被原样存下。
+10. 两个文件都不许 import React / storage；不许 `new Date()`。
+
+**测试要求**：`src/domain/channels.test.ts` 新增（旧 15 条不动）：`compareChannels` 与 `compareChannelCosts` 同参同结果（深度相等）；`compareChannelCosts` 的底价原样透传（传一个奇怪的值如 `12345.678` 也照用）；`aliveDogCount` 传小数时 `fixedPerDogFen === fixedCostFen / 小数`；`aliveDogCount === 0` 时不崩且 `fixedPerDogFen === 0`（此时保本价 = 底价 + extra）。`src/domain/actions.test.ts` 新增 `setBatchChannel`：改一个批次后 `plannedChannel` 变了；其余批次对象引用**不变**（`toBe`）；`dogs`/`entries`/`settings` 引用不变；批次不存在时返回同一引用；改两次不同批次互不影响；传入的 `data` 对象本身未被修改。**测试数会从 417 涨到 417 + 新增条数（约 +11）。** 测试一律显式 `import { describe, it, expect } from 'vitest'`。
+
+**Steps:**
+- [ ] **Step 0**：read `src/domain/channels.ts` 与 `src/domain/channels.test.ts` 全文，确认 15 个 `it` 的内容与现有的 `scenarioData()` / `roundData()` / `input()` / `runtimeInputs()` 夹具可复用。
+- [ ] **Step 1**：TDD——先在 `channels.test.ts` 里加「`compareChannels` 与 `compareChannelCosts` 深度相等」与新核心函数的边界测试 → 失败于 `compareChannelCosts is not a function`（或 `Cannot find module`，取决于你怎样引入）。
+- [ ] **Step 2**：重构 `channels.ts`，让 `compareChannels` 变成三行包装，直到 `npx vitest run src/domain/channels.test.ts` 全绿**且旧 15 条一字未改**。
+- [ ] **Step 3**：TDD——`actions.test.ts` 加 `setBatchChannel` 测试 → 失败于 `setBatchChannel is not a function`。
+- [ ] **Step 4**：在 `actions.ts` **末尾追加** `setBatchChannel`（别动已有函数、别动第 1/2 行 import 区之外的东西；需要 `ChannelId` 就用 `import type`）。
+- [ ] **Step 5**：`npx vitest run` → 全仓通过；`npm run build` / `npm run lint`。
+- [ ] **Step 6**：一次提交（域层重构与新增动作同属「补齐 Task 18 要用的接口」）：
+  ```bash
+  git add src/domain/channels.ts src/domain/channels.test.ts src/domain/actions.ts src/domain/actions.test.ts
+  git commit -m "refactor(domain): 渠道算法唯一入口 compareChannelCosts + 批次计划去向动作"
+  ```
 
 ---
 
@@ -4223,16 +4303,21 @@ export function compareChannels(data: AppData, batchId: string, inputs: ChannelI
 **Goal:** 出门看狗之前能顺便回答「这批走哪条路更划算」。
 
 **Files:**
-- Modify: `src/ui/pages/CalculatePage.tsx`（加渠道对照区块）
-- Modify: `src/ui/pages/DogsPage.tsx`（批次详情：显示并允许修改 `plannedChannel`）
-- Modify: 批次详情用到的纯函数模块（若你把「渠道 id → 中文名」的映射放在 `src/ui/` 的纯函数文件里，一并列出；否则就在 `DogsPage.tsx` 里用一个局部常量，不要为它新建文件）
+- Create: `src/ui/channelView.ts`（渠道 id → 中文名、存活数默认值等纯函数）
+- Create: `src/ui/channelView.test.ts`
+- Modify: `src/ui/pages/CalculatePage.tsx`（加渠道对照区块 + 「存为批次」写入选中渠道）
+- Modify: `src/ui/pages/DogsPage.tsx`（批次详情：把英文 id 改成中文名 + 可改的下拉）
 
-> **Task 18 派发前审计（2026-10-03，控制器核对了实际代码）**——四处计划书与实际不符，动手时以实际代码为准：
+**前提：Task 16b 必须先做完并提交。** 本任务要用到它的 `compareChannelCosts` 与 `setBatchChannel`；没有这两个函数，行为 5 与行为 7 都写不出来（而且按原来的写法会算出错的数——见下面的审计第 6 条）。
+
+> **Task 18 派发前审计（2026-10-03，控制器核对了实际代码）**——**七处**计划书与实际不符（第 5–7 条是同日的二次审计补的，其中第 7 条**推翻了原来的行为 5**），动手时以实际代码为准：
 > 1. **本仓没有单独的「批次详情页」**。`src/ui/pages/` 下只有 `CalculatePage.tsx` / `DogsPage.tsx` / `MoneyPage.tsx` / `QuarantinePage.tsx` / `ReportPage.tsx`；批次列表与批次详情是 `src/ui/pages/DogsPage.tsx`（475 行）同一个文件里的两个视图（它有内部状态在列表与详情之间切换，`DogsPage.tsx:145` 附近有「批次被删掉时退回列表」的处理）。所以「批次详情页」= `src/ui/pages/DogsPage.tsx`。
 > 2. **`plannedChannel` 已经在批次详情里显示了，但显示的是英文 id**：`src/ui/pages/DogsPage.tsx:171` 是 `{batch.date} · 去向：{batch.plannedChannel === 'undecided' ? '未定' : batch.plannedChannel}`——用户会看到 `去向：pet_shop`。**这是现存缺陷，本任务必须顺手修掉**：改走 `SALES_CHANNELS` 查中文名（`undecided` 仍显示「未定」），并把它做成可改的下拉（本任务行为 7）。
-> 3. **行为 5 里那个临时 `AppData` 的字面量字段名错了**：`AppData` 的形状是 `{ version: 1, settings: Settings, batches: Batch[], dogs: Dog[], entries: LedgerEntry[] }`（`src/domain/types.ts`），**没有 `ledger` 字段**，要写 `entries: []`；而且 `version` 与 `settings` 也是必填，构造临时对象时别漏（`settings` 直接用 `data.settings`）。
+> 3. **原来行为 5 里那个临时 `AppData` 的字面量字段名是错的，但整条写法现已作废**（理由见第 7 条）——`AppData` 的形状是 `{ version: 1, settings: Settings, batches: Batch[], dogs: Dog[], entries: LedgerEntry[] }`（`src/domain/types.ts`），**没有 `ledger` 字段**。这条留着只为记住这个形状；本任务**不要**构造临时 `AppData`。
 > 4. 「一键建批次」的调用处就在 `src/ui/pages/CalculatePage.tsx` 里（`handleCreateBatch`），不是第三个文件。`createBatchFromPlan` 的签名是 `createBatchFromPlan(data: AppData, input: PlanInput, batchName: string, date: string, plannedChannel?: ChannelId): AppData`（`src/domain/planning.ts:83` 起，省略时用 `'undecided'`）。
-> 5. **`SALES_CHANNELS` 目前完全不在生产包里——本任务会是第一个真正 import 它的应用代码。** 控制器实测（提交 `71a0b49` 后 `npm run build`）：`dist/assets/index-CgNq0k06.js` 里搜不到 `犬只交易市场`、搜不到 `宠物店`、搜不到 `compareChannels`；唯一命中的是 `未定`（来自别处的 `plannedChannel` 文案）。原因不是打包器丢字段，而是**全仓没有任何应用代码引用它**（`channels.ts:2` 只有 `channels.test.ts` 这条测试链引用，`types.test.ts` 也是测试），所以整份常量被 tree-shake 掉了。**后果**：接线之后**必须重新 build 并在真实浏览器里确认 8 条渠道的中文名与 `note` 真的显示出来了**——单测跑的是源码，能过；生产包里是不是真有这些字符串，只有看构建产物或真机才知道。这也是为什么 Task 18 的走查不能只跑 `npx vitest run`。
+> 5. **`SALES_CHANNELS` 目前完全不在生产包里——本任务会是第一个真正 import 它的应用代码。** 控制器实测（提交 `71a0b49` 后 `npm run build`）：`dist/assets/index-CgNq0k06.js` 里搜不到 `犬只交易市场`、搜不到 `宠物店`、搜不到 `compareChannels`；唯一命中的是 `未定`（来自别处的 `plannedChannel` 文案）。原因不是打包器丢字段，而是**全仓没有任何应用代码引用它**（`channels.ts:2` 只有 `channels.test.ts` 这条测试链引用，`types.test.ts` 也是测试），所以整份常量被 tree-shake 掉了。**后果**：接线之后**必须重新 build 并在真实浏览器里确认 8 条渠道的中文名与 `note` 真的显示出来了**——单测跑的是源码，能过；生产包里是不是真有这些字符串，只有看构建产物或真机才知道。这也是为什么 Task 18 的走查不能只跑 `npx vitest run`。**给自己留一条证据**：接线后跑 `Select-String -Path dist/assets/*.js -Pattern '犬只交易市场' -SimpleMatch`，应当能搜到；报告里贴出来。
+> 6. **`src/domain/actions.ts` 里没有任何能改 `Batch` 字段的动作，`channelName` 也不存在**——这两样由 **Task 16b** 提供（`setBatchChannel`）和本任务提供（`src/ui/channelView.ts`）。**本任务不要自己去 `actions.ts` 里加动作**（Task 16b 已经加了，重复加会撞车）。
+> 7. **⚠️ 上面行为 5 原来写的「造一个临时 `AppData` 再调 `compareChannels`」是错的，已作废，不要照做。** 临时批次里没有狗 ⇒ `aliveCount` 为 0 ⇒ `batchPerDogCostFen` 走 `alive === 0` 分支返回 0（`src/domain/costing.ts:51`）⇒ 底价恒为 0、`fixedPerDogFen` 恒为 0，**摊位费填多少都不影响结果且不报错**。正确的做法见下面重写后的行为 5。
 
 > **📌 犬市「进出场记录」——已拍板（2026-10-03 用户决定，同日已实现，提交 `71a0b49`）**
 > 规程 **4．1．3** 逐字：「已经取得产地检疫证明的犬，从**专门经营动物的集贸市场**继续出售或运输的，或者展示、演出、比赛后需要继续运输的，提供检疫申报单、**原始检疫证明和完整进出场记录**。」
@@ -4242,32 +4327,47 @@ export function compareChannels(data: AppData, batchId: string, inputs: ChannelI
 > **仍然没有做的事**：没有给 `Dog`/`Batch` 加「进出场记录编号」字段，没有在用户选「犬市」时弹提示。**若将来真走犬市**，`Batch.note` 是唯一能写的地方（自由文本，软件不会提醒）——那时再开新任务加字段。
 > 依据：`docs/compliance/2026-10-02-犬只交易合规要点-法规篇.md` §2.9 的逐字原文。
 
-**Consumes:** `compareChannels` / `ChannelInput` / `ChannelBreakdown`（`src/domain/channels.ts`，Task 16）；`batchPerDogCostFen` / `aliveCount`（`src/domain/costing.ts`）；`SALES_CHANNELS` / `ChannelId`（types.ts）；`formatMoney` / `fenToYuan` / `parseMoney`（`src/domain/money.ts`）。
+**Consumes:** `compareChannelCosts` / `ChannelInput` / `ChannelBreakdown`（`src/domain/channels.ts`，**Task 16b**）；`setBatchChannel`（`src/domain/actions.ts`，**Task 16b**）；`plan` / `PlanResult`（`src/domain/planning.ts`，`plan()` 返回的 `totalCost` / `expectedAlive` / `breakEvenPriceFen` 就是渠道对照要用的「每只存活成本」与「存活只数」）；`SALES_CHANNELS` / `ChannelId`（types.ts）；`formatMoney` / `fenToYuan` / `parseMoney`（`src/domain/money.ts`）；`Field`（`src/ui/components/Field.tsx`）。
 
 **必须满足的行为:**
 
 1. 「算」页面在保本价结果**下方**加一个**默认折叠**的「渠道对照」区块，标题旁一句：「同一批狗，走不同的路，最低可卖价不一样。」
-2. 展开后，对 `SALES_CHANNELS` 里除 `undecided` 外的 **8 条渠道**各一行，每行三个输入：**预期单价** / **每只额外成本** / **该渠道固定成本**（都走 `parseMoney`，留空按 0）。
+2. 展开后，对 `SALES_CHANNELS` 里除 `undecided` 外的 **8 条渠道**各一行，每行三个输入：**预期单价** / **每只额外成本** / **该渠道固定成本**（都走 `parseMoney`，留空按 0），并**每行一个单选**用来选「这批走哪条路」。另外在表格上方单独给一个 **`未定` 单选并默认选中**（`undecided` 不在那 8 行里，但行为 6 需要一个「还没定」的选项），旁边写明：「还没定就选这个，存批次时去向记『未定』。」
 3. 每行实时显示 **保本单价** 与 **每只利润**。`isLoss` 为 true 的行标红并写「亏」，否则标绿。
-4. 区块顶部有**存活数**输入（默认取计划里的 `count × (1 − mortalityRate)` 向上取整），因为它决定固定成本摊到几只上。这个数字要能手动改。
-5. 渠道对照**必须调用 `compareChannels`**，界面里不得出现 `base + extra + fixed / n` 这类自己算的式子。**「算」页还没有真实批次时**，用 `{ version: 1, settings: data.settings, batches: [{ id: '__plan__', ... }], dogs: [], entries: [] }` 这样的临时 `AppData`（批次内含一条每只成本 = 决策台算出的每只成本的支出流水），再调用 `compareChannels`——**成本只能有一处算法**。（注意 `AppData` 的字段是 `entries` 不是 `ledger`，且 `version`/`settings` 也是必填，见上面的派发前审计。）实现时若发现更干净的做法，可以改，但必须满足"界面里没有第二套成本公式"。
-6. 「一键存为批次」时，把用户在渠道对照里**选中的那一条**（默认 `undecided`）写进 `batch.plannedChannel`。
-7. 批次详情页显示「计划去向：宠物店」，可点击修改（下拉列 `SALES_CHANNELS`），改完立刻保存。
+4. 区块顶部有**存活数**输入，**默认值取自 `plan()` 结果的 `expectedAlive` 向上取整**（`Math.ceil(result.expectedAlive)`，`plan()` 里它已经是 `Math.max(1, n × (1 − mortalityRate))`，见 `src/domain/planning.ts:52`），这个数字要能手动改，因为它决定固定成本摊到几只上。**不要再写一遍 `count × (1 − mortalityRate)`**——那个式子已经在 `plan()` 里，界面里出现第二遍就是第二套公式。存活数输入**允许小数**吗？**不允许**——它是「几只狗」，用整数输入并在界面上取整；但传给 `compareChannelCosts` 的值就是用户填的那个数，**界面不要替它做任何额外的取整或夹取**（`compareChannelCosts` 允许小数，见 Task 16b 行为 7）。
+5. 渠道对照**必须调用 `compareChannelCosts`**：
+   ```ts
+   compareChannelCosts(result.breakEvenPriceFen, aliveInput, channelInputs)
+   ```
+   第一条参数用 `plan()` 已经算好的保本价——**它就是「每只存活狗的底价」**（`planning.ts:54`：`breakEvenPriceFen = totalCost / expectedAlive`），与决策台显示的那个数是同一个数，**不许再算一遍**。界面里不得出现 `base + extra + fixed / n` 这类自己算的式子，也不得自己去数狗、不得造临时 `AppData`、不得造假狗。**成本只能有一处算法。**
+6. 「一键存为批次」时，把用户在渠道对照里**选中的那一条**（默认 `undecided`）作为第 5 个参数传给 `createBatchFromPlan(data, input, batchName, date, plannedChannel)`（签名见 `src/domain/planning.ts:78-84`，第 5 参可选、省略时用 `'undecided'`）。
+7. 批次详情里把 `去向：{...}` 改成中文名 + 可改的下拉：**现在 `src/ui/pages/DogsPage.tsx:171` 显示的是英文 id**（`{batch.plannedChannel === 'undecided' ? '未定' : batch.plannedChannel}` ⇒ 用户看到 `去向：pet_shop`），**这是现存缺陷，本任务必须修掉**。下拉选项来自 `SALES_CHANNELS`（含 `undecided`），中文名经 `src/ui/channelView.ts` 的 `channelName()` 取，改完立刻 `setBatchChannel(data, batch.id, 选中的值)` 保存。
 8. 金额显示一律走 `formatMoney`（只在界面边界四舍五入）。
 9. 界面文案全中文。
+10. `src/ui/channelView.ts` 只放纯函数、**不 import React**，至少两个：
+    ```ts
+    /** 渠道 id → 中文名。查不到时原样返回 id 本身（旧备份里可能有未知渠道）。 */
+    export function channelName(id: string): string
+    /** 渠道对照里「存活数」输入框的默认值：预估存活数向上取整，至少 1。 */
+    export function defaultAliveInput(expectedAlive: number): number
+    ```
+    `channelName('undecided')` 必须是 `'未定'`，`channelName('pet_shop')` 必须是 `'宠物店 / 宠物医院'`，`channelName('taobao_live')` 必须回落成 `'taobao_live'`（不抛错、不空白）。`defaultAliveInput(6.8)` → `7`、`defaultAliveInput(0.4)` → `1`、`defaultAliveInput(0)` → `1`。
+
+**测试要求**：`src/ui/channelView.test.ts` 覆盖行为 10 列出的每一个断言（含未知渠道回落与 `Math.ceil` 的边界）。渠道对照与批次详情的**界面行为**由控制器的真实浏览器走查负责，本任务不要求为页面写组件测试（仓里没有测试库，也不引入）。测试一律显式 `import { describe, it, expect } from 'vitest'`。
 
 **Steps:**
-- [ ] **Step 0**：read `src/ui/pages/CalculatePage.tsx` 与 `src/ui/pages/DogsPage.tsx`（批次详情就在后者的详情视图里），确认现有 `input` useMemo 与「存为批次」的调用链。
-- [ ] **Step 1**：实现渠道对照区块。
-- [ ] **Step 2**：把 `plannedChannel` 接进建批次与批次详情。
-- [ ] **Step 3**：`npx vitest run` / `npm run build` / `npm run lint`。
-- [ ] **Step 4**：`npm run dev` 手动验证：填一个批次 → 展开渠道对照 → 「宠物店」填单价 900、每只成本 0、固定成本 0 → 保本单价应等于决策台的每只成本；「犬市」填固定成本 400、单价 900 → 保本单价变高、可能标红 → 存为批次后进批次详情 → 计划去向是选中的那条，能改。
-- [ ] **Step 5**：提交：
+- [ ] **Step 0**：read `src/ui/pages/CalculatePage.tsx`（165 行）与 `src/ui/pages/DogsPage.tsx`（475 行，批次详情在详情视图里，`:171` 是要改的那行），确认现有 `input` useMemo、`result`（`plan()` 的返回值）与 `handleCreateBatch` 的调用链；read `src/domain/channels.ts` 确认 Task 16b 之后的 `compareChannelCosts` 签名。
+- [ ] **Step 1**：先写 `src/ui/channelView.ts` + `channelView.test.ts`（TDD：先测试后实现）。
+- [ ] **Step 2**：实现「算」页面的渠道对照区块（行为 1–6）。
+- [ ] **Step 3**：改批次详情（行为 7）。
+- [ ] **Step 4**：`npx vitest run` / `npm run build` / `npm run lint`，然后**额外跑一次**：`Select-String -Path dist/assets/*.js -Pattern '犬只交易市场' -SimpleMatch` 与 `-Pattern '宠物店'`，把结果贴进报告（见审计第 5 条）。
+- [ ] **Step 5**：（不用 `npm run dev`；控制器的真实浏览器走查会验界面。）
+- [ ] **Step 6**：提交：
   ```bash
-  git add src/ui/pages/CalculatePage.tsx src/ui/pages/DogsPage.tsx
+  git add src/ui/channelView.ts src/ui/channelView.test.ts src/ui/pages/CalculatePage.tsx src/ui/pages/DogsPage.tsx
   git commit -m "feat(ui): 渠道对照与批次计划去向"
   ```
-  （若确实新建了 `src/ui/` 下的纯函数模块，把它加进 `git add` 的显式路径列表。**不许写 `git add src`**——这个仓里同时可能有人在改别的文件，已经因此误提交过一次。）
+  （**不许写 `git add src`**——这个仓里同时可能有人在改别的文件，已经因此误提交过一次。）
 
 ---
 
