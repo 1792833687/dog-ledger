@@ -198,13 +198,19 @@ describe('channelInputsFromRows：喂给 compareChannelCosts 的入参', () => {
 describe('parseAliveInput：存活数输入框', () => {
   it('整数原样通过，不做取整也不做夹取', () => {
     expect(parseAliveInput('6')).toBe(6)
-    expect(parseAliveInput('0')).toBe(0)
     expect(parseAliveInput('120')).toBe(120)
   })
 
-  it('空 = 0（还没填）', () => {
-    expect(parseAliveInput('')).toBe(0)
-    expect(parseAliveInput('  ')).toBe(0)
+  it('0 是合法整数：域层那条全灭分支要有意义', () => {
+    expect(parseAliveInput('0')).toBe(0)
+  })
+
+  it('空 = null（还没填 ≠ 0 只存活；静默按 0 算会把保本价算低）', () => {
+    expect(parseAliveInput('')).toBeNull()
+  })
+
+  it('纯空格也是空', () => {
+    expect(parseAliveInput('   ')).toBeNull()
   })
 
   it('小数返回 null（它不是「几只狗」，交给界面报错而不是偷偷取整）', () => {

@@ -121,7 +121,12 @@ export function channelInputsFromRows(rows: Record<string, ChannelRowText>): Par
 }
 
 /**
- * 解析「存活数」。它是「几只狗」，所以只收整数；空串按 0 处理（还没填）。
+ * 解析「存活数」。它是「几只狗」，所以只收整数；**空串返回 `null`（不是 0）**。
+ *
+ * 空输入框不等于「0 只存活」：用户可能只是想把原来的数字删掉重打，这时候按 0 算
+ * ⇒ `fixedPerDogFen = 0` ⇒ 保本价 = 底价 + 每只额外，**偏低还不报错** —— 正是
+ * Task 16b 拆出这一层要消灭的那类静默错数。`'0'` 仍然是合法整数（域层
+ * `aliveDogCount === 0` 那条分支是给真实的全灭批次兜底的）。
  *
  * 这里**不做取整也不做夹取**：用户填 0 就传 0（`compareChannelCosts` 有
  * `aliveDogCount === 0` 的分支，固定成本摊成 0，不会除零）。界面替用户改数，
@@ -129,7 +134,7 @@ export function channelInputsFromRows(rows: Record<string, ChannelRowText>): Par
  */
 export function parseAliveInput(raw: string): number | null {
   const trimmed = raw.trim()
-  if (trimmed === '') return 0
+  if (trimmed === '') return null
   if (!/^\d+$/.test(trimmed)) return null
   const value = Number(trimmed)
   return Number.isFinite(value) ? value : null

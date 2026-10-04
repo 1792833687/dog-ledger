@@ -222,7 +222,13 @@ export function CalculatePage() {
               渠道对照 {channelsOpen ? '▾' : '▸'}
             </span>
             <span className="text-right text-xs text-gray-400">
-              同一批狗，走不同的路，最低可卖价不一样。
+              {/* 折叠着也要看得见选了哪条路：下面那个按钮照样会带着它建批次。 */}
+              <span className="block font-semibold text-gray-600">
+                去向：{channelName(selectedChannel)}
+              </span>
+              <span className="mt-0.5 block">
+                同一批狗，走不同的路，最低可卖价不一样。
+              </span>
             </span>
           </button>
 
