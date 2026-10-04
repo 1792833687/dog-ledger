@@ -4982,6 +4982,31 @@ git add src/ui/backupStatus.ts src/ui/backupStatus.test.ts src/ui/components/Bac
 git commit -m "feat: 备份安全网、PWA 清单、部署说明与项目 README"
 ```
 
+> **Task 14 实施记录（2026-10-04；本计划的最后一个任务）**
+>
+> **提交**：`a03d559 feat: 备份安全网、PWA 清单、部署说明与项目 README`（12 files / +248 / −23；新增 `src/ui/backupStatus.ts`(14) + `backupStatus.test.ts`(29, 7 条) + `src/ui/components/BackupBanner.tsx`(23) + `src/ui/pages/BackupPanel.tsx`(116) + `public/manifest.webmanifest`(12) + `public/icon-192.png`(412B) + `public/icon-512.png`(1495B) + `DEPLOY.md`(21)，改 `index.html` +2、`src/App.tsx` +2、`src/ui/pages/ReportPage.tsx` +2、`README.md` 50 行改动），父提交 `db0e5d4`。
+> **随后一个修复提交**：`e4a7130 fix(ui): 刚导出后备份面板不再显示「-1 天前备份过」`（2 files / +13 / −1）——见下面「走查抓到的真实缺陷」。
+>
+> **门禁（控制器独立复跑，不看实施者转述）**：`npx vitest run` → `Test Files 22 passed (22)` / `Tests 506 passed (506)`（基线 21/499，+7 = `backupStatus.test.ts`）→ 追加修复后 **508 passed**；`npm run build` → `✓ 51 modules transformed`（47→51）/ `dist/assets/index-nvucCv1J.js` 292.74 kB / gzip 88.97 kB（修复后 `index-DK-zf1EH.js` 292.75 kB）；`npm run lint` → `Found 0 warnings and 0 errors.`（58→62 files）；`git status --short` 空。
+> TDD 红态：`Error: Cannot find module './backupStatus' imported from ...`（任务书写的是 `Failed to resolve import`，同 Task 5 的先例——vitest 5.0.3 走 Node 解析器，**措辞不同、失败相同**）。
+>
+> **实施者的 6 处偏离，控制器全部接受**：①红态报错措辞（同上）；②`BackupPanel` 里把任务书的 `const restored = pendingRestore!` 改成 `const restored = pendingRestore; if (!restored) return` —— 更稳，且非空断言本就在「禁止任何类型绕过」的精神管控内；③README 首段显式写出「也不做多人同步或云端备份」（任务书只要求「不要编造」，写清边界比留白更好）；④落点按控制器核实过的语义位置（`<SettingsPanel />` 现 `:255`、`<BackupPanel />` 现 `:256`、import 加在 `:9` 之后），**没有**为迁就任务书的旧行号去动别的区块；⑤`index.html` 两行插在 `theme-color` meta 之后、`<title>` 之前；⑥两个 PNG 用零依赖 `node:zlib` 的 `deflateSync` 手拼（8 字节签名 + IHDR + IDAT + IEND、每行 filter=0、自己算 crc32），SDF + 2×2 超采样画 emerald-600 圆角底板 + 白色爪印，**没装任何依赖**（`sharp` 方案未采用）。生成脚本与验证脚本都在 `$env:TEMP\dogledger-icons\`，**未提交**。
+>
+> **两个 PNG 的独立复核（控制器自己做，不信实施者的自证）**：自己写解码器扫 chunk 边界 + 校验 crc32 + `inflateSync` 解 IDAT →
+> `public/icon-192.png: bytes=412 sig=ok chunks=IHDR,IDAT,IEND 192x192 depth=8 color=2 inflated=110784 expected=(192*3+1)*192=110784 match=true sha256=a2e76880a2661fac`
+> `public/icon-512.png: bytes=1495 sig=ok chunks=IHDR,IDAT,IEND 512x512 depth=8 color=2 inflated=786944 expected=786944 match=true sha256=939e8949c6ac53e3`
+> 两张图的 sha256 前缀与实施者报的完全一致，IDAT 解压后字节数严格等于 `(w*3+1)*h` ⇒ 是**真能解码的像素流**，不是坏图。
+>
+> **走查（控制器 CDP 探针，真实浏览器 + 真实 IndexedDB）**：探针 `probes/dogledger-t14.mjs`（25704 B，`PORT = 9355`，`spawn(EDGE, [...], { stdio: 'ignore' })` + `--headless=new`）→ **86/86 PASS**，0 条 `Runtime.exceptionThrown`、0 条 `console.error`。九段覆盖：①全新库无横幅 + 面板「从未备份过 · 共 0 条流水、0 只狗」②算页建 2 只批次 ③有数据未备份 → 黄色横幅（含「手机丢了」）→ 点它跳「报」页 ④**导出**（文件名 `狗账备份-YYYY-MM-DD.json`、内容 `{app:'dog-ledger', version:1, exportedAt, data}`、快照里 `lastBackupAt` 仍是 `null`、导出后库里 `lastBackupAt` 变成带 `T` 的时间戳、横幅消失）⑤六步清单：卖出 1 只（有 income 流水）→ 标 1 只死亡 → 注资 1000（`type='injection'`/`amount=100000`）→ 生成对账单 PNG（文件名 `对账单-YYYY-MM-DD.png`、文件头 `89 50 4e 47 0d 0a 1a 0a`、>1KB）⑥`Storage.clearDataForOrigin` + reload → IndexedDB 空、报页「还没有数据」⑦`DOM.setFileInputFiles` 选回那个 `.json` → 「恢复备份？」「备份里有 N 条流水、M 只狗」「撤销不了」→ 确认覆盖 → 数据全部回来 + reload 后仍在 ⑧manifest 与两个 PNG 的 IHDR 宽高逐项对上 ⑨无异常。
+> **探针的关键手法**：临时把 `HTMLAnchorElement.prototype.click` 换成只记 `{href, download}` 的桩、`URL.revokeObjectURL` 换成空操作，再点按钮，然后 `fetch(blobUrl)` 直接读内容 —— **完全绕开 CDP 下载落盘**（`Page.setDownloadBehavior` 那套在 headless+沙箱下容易踩坑）。
+>
+> **走查抓到的真实缺陷（首轮 76/85 里唯一的产品问题）**：点完「导出备份文件」后面板显示 **`-1 天前备份过`**。成因是任务书自己规定的写法：`now` 只能用 `useState(() => new Date())` 在**挂载时**取一次（渲染体里调 `new Date()` 会被 `react(purity)` 拦），而 `lastBackupAt` 是点完导出才写进库的 ⇒ 刚导完那一瞬间 `lastBackupAt > now`，`Math.floor(负数/86400000)` = `-1`。修法：`daysSinceBackup` 最后一行 `Math.max(0, Math.floor(diff / 86400000))` —— **天数没有负的，一律按 0（就是刚备份过）**。TDD：先加 2 条测试（`daysSinceBackup` 的未来时间戳 → 0；`shouldWarnBackup` 的未来时间戳 → 不警告），红态 `AssertionError: expected -1 to be +0`，改一行后 508 passed。
+> **首轮另外 8 条失败全是探针自己的期望写错（第 9 次同类错误）**：恢复那一段我拿「清数据前的库」当期望，而 `backup.json` 是**导出那一刻的快照**（比清数据前少后面加的卖出收入与注资两笔）⇒ 恢复后正确结果就是 5 条流水、0 已售、0 死亡、没有注资。**教训（再记一次）：断言失败时先核探针自己的期望从哪来，再考虑给实现开缺陷。**
+>
+> **待用户拍板项（不在本轮做）**：**恢复备份后 `lastBackupAt` 会回到备份文件里的值**（我们这个文件里是 `null`），于是刚恢复完的界面会说「从未备份过」并重新挂上黄色提醒。两种解读都成立：⑧「这台设备的数据还没有备份过」⇒ 提醒是对的；⑨「我手里就有一个刚用过的备份文件」⇒「从未备份过」听着像恢复失败。改法很小（恢复时把 `lastBackupAt` 刷成现在，或在 `importBackup` 里用文件顶层的 `exportedAt`），但**这是产品语义决定，按设计文档 D10 须先经用户同意**，故仅记录现状：探针里钉住的就是「现状」。另一条 parked：`now` 只在挂载时取一次 ⇒ 页面长期不关不会自己刷新天数（手机浏览器会重载，暂不处理）。
+>
+> **本任务完成后，计划的 21 个任务（含 11b/13b/15b/16b/17b/18b/21b）全部落地**，`feature/dog-ledger` 分支上最后一次门禁为 22 files / 508 passed、lint 0/0、build 51 modules。
+
 ---
 
 ## 完成之后
