@@ -4564,9 +4564,9 @@ export function setBatchChannel(data: AppData, batchId: string, channel: Channel
 4. `CalculatePage` 建批次时的默认名从 `` `收狗 ${input.n} 只` `` 改成 **`` `收狗 ${input.n} 只 ${localTimeHm(now)}` ``**（例如 `收狗 2 只 14:07`）。改法逐字如下——**必须复用同一个 `Date` 对象，不许新增第二个 `new Date()`，也不许把 `const now` 提到组件体（渲染期）**，提到渲染期会让 `npm run lint` 变红 `react(purity)`（见 `## Global Constraints`）：
    ```ts
    function handleCreateBatch() {                          // 现在在 :108
-     const now = new Date()                                // 必须留在事件处理器里
-     const name = `收狗 ${input.n} 只 ${localTimeHm(now)}`   // 现在 :109
-     const date = todayLocalIso(now)                        // 现在 :110
+     const now = new Date()                                // 新增。必须留在事件处理器里
+     const name = `收狗 ${input.n} 只 ${localTimeHm(now)}`   // 现在 :109，只加 ${localTimeHm(now)}
+     const date = todayLocalIso(now)                        // 现在 :110，原来写的是 todayLocalIso(new Date())
      void update(d => createBatchFromPlan(d, input, name, date, selectedChannel))
      setCreated({ name, channel: selectedChannel })
    }
@@ -4710,7 +4710,9 @@ export function BackupBanner({ onGoToBackup }: { onGoToBackup: () => void }) {
 }
 ```
 
-> **不要写成 `const now = new Date()`。** 这是本任务最容易照抄出错的一处：`react(purity)` 规则会把它标成 warning，而门禁要求 0 warning。`useMemo` 与 `useEffect` 也过不了，只有 `useState` 惰性初始化可以——Step 6 的 `BackupPanel` 用的是同一个写法，两处必须一致。
+> **不要写成 `const now = new Date()`。** 这是本任务最容易照抄出错的一处：在渲染体里调 `new Date()` 会被 `react(purity)` 标成 warning，而门禁要求 0 warning（`useMemo` 的回调也在渲染期跑，同样会被拦）。
+>
+> **写 `useState` 惰性初始化的依据不是推理，是本仓已经通过的代码**：`src/ui/pages/ReportPage.tsx:25` 现在就写着 `const [today] = useState(() => todayLocalIso(new Date()))`，而全仓 `npm run lint` 是 `Found 0 warnings and 0 errors.` —— 同一个写法在本仓已被门禁验证过。Step 6 的 `BackupPanel` 用同一写法，两处必须一致。
 
 - [ ] **Step 6: 写备份面板**
 
@@ -4748,6 +4750,9 @@ export function BackupPanel() {
     a.click()
     a.remove()
     setTimeout(() => URL.revokeObjectURL(url), 0)
+    // lastBackupAt 是**完整时间戳**（ISO datetime），不是 `YYYY-MM-DD` 那种日期串，
+    // 所以这里用 toISOString() 是对的 —— 别照着「不许用 toISOString()」那条规则来「修」它
+    //（那条规则针对的是日期串：UTC 会把东八区的晚上算成前一天）。见 `src/domain/types.ts:85`。
     update(d => ({ ...d, settings: { ...d.settings, lastBackupAt: new Date().toISOString() } }))
     setMessage('已导出。把文件发到微信收藏或存到电脑上。')
   }
@@ -4925,15 +4930,12 @@ Expected: 全部通过
 Run: `npm run build`
 Expected: 无 TS 错误
 
-Run: `npm run dev`，手动走一遍完整流程：
-1. 在「算」里建一个批次
-2. 去「狗」里卖出一只、标记一只死亡，确认「剩余保本」变化
-3. 去「钱」里记一笔注资，确认池子余额变化
-4. 去「报」里生成对账单图片并下载
-5. 点「导出备份文件」，确认下载到 `.json`
-6. 清掉浏览器站点数据 → 刷新，确认数据没了 → 「从备份恢复」选刚才的文件 → 确认数据全部回来
+Run: `npm run lint`
+Expected: `Found 0 warnings and 0 errors.`
 
-第 6 步是必做的，不做等于没做备份功能。
+> **不用 `npm run dev`。** 下面这份清单是**验收标准**，由控制器的真实浏览器（CDP）探针逐条验证——包括第 6 步（清站点数据再恢复），控制器会用 `Storage.clearDataForOrigin` + `DOM.setFileInputFiles` 真跑一遍。你只需要把上面三条门禁跑绿、并在报告里说明「这几条我没在浏览器里验」。
+>
+> 手工清单（控制器要验的）：1. 在「算」里建一个批次 → 2. 去「狗」里卖出一只、标记一只死亡，确认「剩余保本」变化 → 3. 去「钱」里记一笔注资，确认池子余额变化 → 4. 去「报」里生成对账单图片并下载 → 5. 点「导出备份文件」，确认下载到 `.json` → 6. 清掉浏览器站点数据 → 刷新，确认数据没了 → 「从备份恢复」选刚才的文件 → 确认数据全部回来。**第 6 步是必做的，不做等于没做备份功能。**
 
 - [ ] **Step 11: 提交**
 
