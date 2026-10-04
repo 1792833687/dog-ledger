@@ -4379,6 +4379,23 @@ export function setBatchChannel(data: AppData, batchId: string, channel: Channel
   ```
   （**不许写 `git add src`**——这个仓里同时可能有人在改别的文件，已经因此误提交过一次。）
 
+> **Task 18 实施记录（2026-10-03，控制器复核）**
+> 提交 `9cf9ebbe5dc8708da37fc2f5c7872e44db80b0e5 feat(ui): 渠道对照与批次计划去向`，4 files / +575 / −8：新建 `src/ui/channelView.ts`(136) + `channelView.test.ts`(225)，`src/ui/pages/CalculatePage.tsx` 165 → **354** 行、`src/ui/pages/DogsPage.tsx` 475 → **492** 行。门禁：`Test Files 20 passed (20)` / `Tests 462 passed (462)`（+32，其余 19 个文件一个没变）、`✓ 46 modules`（原 44）、`index-3hsx8LGw.js` 284.94 kB（原 277.30，+7.64 kB 就是 9 条渠道 name+note）、lint 0/0 on 56 files。TDD 红态 `Cannot find module './channelView'`。
+> **tree-shaking 取证成立**：接线前 `SALES_CHANNELS` **完全不在生产包里**（改 `types.ts` 的 note 后产物字节不变），接线后两条 `Select-String` 都命中 `index-3hsx8LGw.js:9` —— 单测跑源码能过，生产包却可能是空白的，这个坑只有 grep 产物才能发现。
+> 接受 11 处偏离（3 列表格、标签缩短、「没填过」= 全 0、`channelOptions` 补未知渠道第 10 项、`parseChannelRow` 区分「留空」与「填错」、多导出 7 个都有测试的纯函数、存活数不取整、`bg-red-50` 只给亏损行、区块位置紧贴建批次按钮、`<p>` 换 `<div>`、两条 grep 真跑了）。
+> 控制器裁定 5 条（原报告第 7 节）：`parseAliveInput('')` **必须**返回 `null` 而不是 0（见 Task 18b）；折叠标题行**必须**常显已选去向；未知渠道可选可改**保持**；负数判 `invalid` **保持**；「8 行全 0 看起来像真的」**暂不加提示**（脚注已写明底价与摊薄方式）。
+> ⚠️ 本节上面那些「475 行 / 165 行 / `:171`」是**派发时**的状态，Task 18 自己把它们改掉了；回读这一段时不要拿旧行号去对现在的文件。
+
+> **Task 18b 实施记录（2026-10-03，控制器派发的两条必改）**
+> 提交 `d4ae9527c9f7b4ce95b640ff5626936478477181 fix(ui): 清空存活数不再静默按 0 算；折叠时也显示已选去向`，3 files / +24 / −7。
+> 1. `src/ui/channelView.ts:137` `parseAliveInput` 的空串分支 `return 0` → `return null`（`'0'` 仍是合法整数）。**理由**：用户清空输入框可能只是想重打一个字，按「0 只存活」算会让 `fixedPerDogFen = 0` ⇒ 保本价偏低且不报错不标红，正是 Task 16b 拆出这一层要消灭的那类静默错数；「空输入框」不等于「0 只存活」。
+> 2. `src/ui/pages/CalculatePage.tsx:226-228` 折叠标题行右侧常显 `去向：{channelName(selectedChannel)}`（在折叠 `<button>` 内部，两种状态都在）——否则那个按钮会带着用户看不见的去向建批次。
+> 门禁：`Test Files 20 passed (20)` / `Tests 464 passed (464)`（基线 462，+2）、`✓ 46 modules`、`index-Bk4Oy2cJ.js` 285.08 kB、lint 0/0 on 56 files、两条 `Select-String` 仍命中。TDD 红态 `expected +0 to be null` ×2。
+> **控制器真实浏览器走查：`64/64 PASS`、`Runtime.exceptionThrown: 0`、`console.error: 0`**（探针 `C:\Users\17928\AppData\Local\Temp\dogledger-t18.mjs`，`--remote-debugging-port=9349`、`--headless=new`、真实时间 + 真实 IndexedDB，`vite preview --port 5199`）。关键几条：全新账本上**给犬市那行填 300 元摊位费 → 保本价 ¥905.88 → ¥948.74、固定成本每只摊 ¥42.86、该行标红写「亏」，而宠物店那行纹丝不动 ¥905.88**（这就是「摊位费必须真的影响结果」的硬断言，也正是 Task 16b 要修的那条静默失效路）；存活数 1 → 每只摊 ¥300.00、保本 ¥1,205.88；★清空存活数 → 红字 + 表格消失 + **不再有任何保本价数字**；填 0 → 合法、每只摊 ¥0、保本回 ¥905.88；`6.8` → 拒绝；`abc`/负数/全角 → 该行「这不像数字」+「—」而其它行照常；`1,200` 认成 ¥1,200.00；折叠标题行显示 `去向：宠物店 / 宠物医院`；建成批次后 `plannedChannel === 'pet_shop'`、成功文案用中文名；「狗」页详情下拉显示中文、9 项、**不再把 `pet_shop` 这种英文 id 当显示文本**；改成 `dog_market` 立刻写库、刷新后仍在；用旧备份造未知渠道 `taobao_live` → 原样保留 + 显示「taobao_live（未知渠道）」+ 补成第 10 项。
+> 首轮 61/64 的 3 条失败全是**探针自己写错**（同类第 7 次）：`await ev('window.__T.chSelect()')` 把 DOM 节点按值返回触发 CDP `Object reference chain is too long`；`formatMoney(30000)` 是 `¥300` 不是 `¥300.00`（会去掉尾零）；`nav()` 没剥掉标签里的 emoji，真实文本是 `🧮算`。**教训不变：断言失败先核探针自己的取值方式与字符串。**
+> Task 18b 报的两点留作 parked（**不是缺陷**）：存活数非法时整张表连同已填的渠道金额一起消失（数据在 state 里没丢，红字说明了原因，改成「只置灰不算数」要动表格渲染结构）；金额格的空格 = 0、存活数格的空格 = 报错（语义相反但各自正确：成本可以是 0，「0 只存活」是另一回事）。另：`selectedChannel` 与渠道金额在切标签后不保留（「算」页本来就是草稿纸，持久化的正是「一键存为批次」）。
+> **一致性佐证**：改完之后 `parseAliveInput` 的空串处理与 `src/ui/planForm.ts:102` 的 `parseMortalityPercent` 完全相同 ⇒「空 = null（界面报错）」本来就是本仓「只数 / 比例」字段的既有约定，`parseAliveInput` 之前是这条约定里的例外。**日后新加数值字段照 `planForm.ts` 这两条写。**
+
 ---
 
 ### Task 19: 设置面板补两个检疫天数 + 校验
@@ -4459,30 +4476,37 @@ export function setBatchChannel(data: AppData, batchId: string, channel: Channel
 **Files:**
 - Create: `src/domain/stats.ts`
 - Test: `src/domain/stats.test.ts`
-- Modify: `src/ui/pages/ReportPage.tsx`（在 Task 12 的产出之后追加一节；Task 14 还会在本页底部再加备份面板，两次追加互不冲突）
+- Modify: `src/ui/pages/ReportPage.tsx`（**插在排行块的 `)}`（`src/ui/pages/ReportPage.tsx:179`）与 `<SettingsPanel />`（`:181`）之间**；Task 14 把备份面板接在 `<SettingsPanel />` 之后，两处不冲突。注意行为 6 是**两节**）
 
 **Interfaces:**
 - Consumes: `AppData`、`LedgerEntry`、`Money`（`src/domain/types.ts`）；`dogsOfBatch`（`src/domain/costing.ts`）
 - Produces（`src/domain/stats.ts`，全部为纯函数）：
   - `interface CostShare { category: string; name: string; totalFen: Money; share: number }`
   - `costBreakdown(data: AppData): CostShare[]`
-  - `interface MortalityPoint { batchId: string; name: string; date: string; rate: number; dead: number; total: number }`
+  - `interface MortalityPoint { batchId: string; name: string; date: string; rate: number; dead: number; total: number; deltaFromPrevious: number | null }`
   - `mortalityTrend(data: AppData): MortalityPoint[]`
 
 **必须满足的行为：**
 1. `costBreakdown` **只统计 `type === 'expense'` 的流水**（不要把 `income` 算进去），按 `category` 汇总，返回数组按 `totalFen` **降序**；`share = totalFen / 所有支出之和`；**支出总额为 0 时所有 `share` 都是 0，绝不许出现 NaN**。
-2. `name` 从 `data.settings.costItems.find(c => c.id === category)?.name` 解析，**解析不到时回落 `'其他'`**（用户在设置页删掉某个成本项后，历史流水仍要能显示）。**不要在 `stats.ts` 里另抄一张硬编码的分类表**——Task 11 的「钱」页与 Task 13 的设置页共用同一套可自定义成本项，多抄一张表就会漂移。
-3. `mortalityTrend` 每个批次一条，按 `date` **升序**（老的在前，才看得出趋势）；`total` = 该批次**全部**狗数（含在库/已售/死亡/退回），`dead` = `status === 'dead'` 的只数；`rate = total === 0 ? 0 : dead / total`。
+2. `name` 从 `data.settings.costItems.find(c => c.id === category)?.name` 解析，**解析不到时回落 `'其他'`**。**不要在 `stats.ts` 里另抄一张硬编码的分类表**——Task 11 的「钱」页与 Task 13 的设置页共用同一套可自定义成本项，多抄一张表就会漂移。**说明两件事**：(a) 这个回落**必须保留**，但**不要**把它说成「用户在设置页删掉了成本项」——设置页只加不删（`src/ui/pages/SettingsPanel.tsx:205-231` 只有「加」）；真正会走到兜底的是**备份 JSON 被外部编辑或导入后 `costItems` 里没有该 id**。(b) `src/ui/moneyBook.ts:51-53` 已经有一份同逻辑的 `catLabel`，但 `stats.ts` 在 `src/domain/`、按 `## Global Constraints` 不许 import `src/ui/*` ⇒ **这是有意重复一份解析，不是漏了 DRY**，请在注释里写明，免得下一个人为了 DRY 把 ui 依赖引进 domain。
+3. `mortalityTrend` 每个批次一条，按 `date` **升序**（老的在前，才看得出趋势；同一天多批次时保持 `data.batches` 里的原顺序即可，JS 的 `sort` 是稳定的，不要为此另加排序键）；`total` = 该批次**全部**狗数（含在库/已售/死亡/退回），`dead` = `status === 'dead'` 的只数；`rate = total === 0 ? 0 : dead / total`；`deltaFromPrevious` = 本批 `rate` 减去**排序后前一批**的 `rate`，**第一批是 `null`**（不是 0——「首批」与「与上一批持平」是两件事）。
 4. 空数据（没有批次 / 没有流水）返回 `[]`，不抛错、不产生 NaN。
 5. 纯函数：不 import React、不 import storage、**不调用无参 `new Date()`**、不得修改入参。
-6. 界面：在「报」页追加两节——标题「钱花在哪了」列出成本结构（分类名 + 金额 + 占比条），标题「死亡率」列出各批次 `日期 · 批次名 · N 只里死了 M 只（X%）`。两节都无数据时各显示一句「还没有数据」。这一节**只读、不接受任何输入**。如果这一节不需要 today，就**不要**去取今天（渲染期不得调 `new Date()`，见 `## Global Constraints` 最后那条）。
+6. 界面：在「报」页排行榜之后追加两节——
+   - 标题「**钱花在哪了**」：成本结构（分类名 + 金额 + 占比条）。
+   - 标题「**死亡率趋势**」（**不要叫「死亡率」，也不要与现存的「批次盈亏排行」重名**）：各批次按日期升序，每行 `日期 · 批次名 · N 只里死了 M 只（X%）`，**再补一个只有这一节才有的信息**——与上一批相比的百分点增减。文案：`deltaFromPrevious === null` → `首批`；`=== 0` → `与上一批持平`；升 → `` `比上一批 +${(delta * 100).toFixed(1)} 个百分点` `` 且标红；降 → `` `比上一批 -${(Math.abs(delta) * 100).toFixed(1)} 个百分点` `` 且标绿。**只换排序不算趋势视角**：排行块（`src/ui/pages/ReportPage.tsx:167-168`）已经显示了同样的三个数，所以这一节要么给出方向（增减），要么就没有存在的必要。
+   - 两节都无数据时各显示一句「还没有数据」。两节**只读、不接受任何输入**。如果这一节不需要 today，就**不要**去取今天（渲染期不得调 `new Date()`，见 `## Global Constraints` 最后那条）。**不要顺手删或搬动 `src/ui/pages/ReportPage.tsx:25` 那行已有的 `const [today] = useState(() => todayLocalIso(new Date()))`**（Task 12 的图片文件名在用）。
 
-**测试要求**（`src/domain/stats.test.ts`，**新建文件，必须显式 `import { describe, it, expect } from 'vitest'`**）：至少覆盖 —— 两类支出各自汇总正确且按金额降序；只有收入没有支出时 `share` 全为 0 且不出 NaN；自定义成本项的名字能被解析出来、被删掉的成本项回落成「其他」；`mortalityTrend` 按日期升序且 `rate` 数值正确（含 `total === 0` 的分支）；空数据返回 `[]`；函数不修改入参。
+**测试要求**（`src/domain/stats.test.ts`，**新建文件，必须显式 `import { describe, it, expect } from 'vitest'`**）：至少覆盖 —— 两类支出各自汇总正确且按金额降序；只有收入没有支出时 `share` 全为 0 且不出 NaN；自定义成本项的名字能被解析出来、`costItems` 里没有那个 id 时回落成「其他」；`mortalityTrend` 按日期升序且 `rate` 数值正确（含 `total === 0` 的分支）；`deltaFromPrevious` 第一批为 `null`、第二批等于两批 `rate` 之差、第三批只看紧邻的前一批；空数据返回 `[]`；函数不修改入参。
+**测试数量期望**：本任务之前是 `Test Files 20 passed (20)` / `Tests 464 passed (464)`；做完应为 **21 files**，`Tests` 至少 **464 + 12**。门禁逐条贴原文。
 
 > **Task 20 派发前审计（2026-10-03，控制器核对了实际代码）**
-> - `LedgerEntry.category` 是**自由字符串**（`addExpense` 的入参就是 `category: string`，`src/domain/actions.ts:26-36`），所以行为 2 的「解析不到回落 `其他`」不是防御性代码，是**真的会走到**：支出里还有 `aftercare_refund`（退狗退款）这类由动作层直接写死的 `category`。别假设 `category` 一定是某个成本项 id。
+> - `LedgerEntry.category` 是**自由字符串**（`addExpense` 的入参就是 `category: string`，`src/domain/actions.ts:26-36`），所以行为 2 的「解析不到回落 `其他`」不是防御性代码，是**真的会走到**。别假设 `category` 一定是某个成本项 id。
+> - ⚠️ **别拿 `aftercare_refund` 当「解析不到」的例子**：它是内置成本项（`src/domain/types.ts:165`，name `售后退款`，`isBuiltin: true`），`DEFAULT_SETTINGS.costItems = BUILTIN_COST_ITEMS`（`:173`）⇒ **它一定解析得出名字**。本仓目前写入的每个 `category` 都是内置项 id。真正会走到兜底的是备份被外部改过、`costItems` 与流水不一致时。
 > - **`mortalityTrend` 的分母必须和 Task 12 的死亡率分母是同一个数。** Task 12 的排行块用 `summary.sold + summary.dead + summary.inStock`，而你这里的 `total` 是「该批次全部狗数含在库/已售/死亡/退回」——两者**应当恒等**（`src/domain/costing.ts:27-30` 的 `inStockCount` 已含 `returned`，所以 `sold + dead + inStock` 就是全部狗）。加一条测试钉住这件事：一批 10 只（4 售出 / 2 死亡 / 2 在库 / 2 退回）时 `total === 10` 且 `rate === 0.2`。**如果哪天这两页给出不同的死亡率，用户会不知道该信哪个。**
-> - 「报」页里 Task 12 已有一节叫「批次盈亏排行」（每批 `共 N 只 · 死亡 M 只 · 死亡率 X%`），你要加的第二节也叫「死亡率」。**两节不要重复列同一件事**：先 read `src/ui/pages/ReportPage.tsx` 看排行块现在显示了什么，然后让新的一节承担**只有它才有**的信息（趋势视角：按日期排开、能看出来「最近的批次是不是死得更多」）。如果你认为两节应当合并，**先在报告里说明并停下**，不要自己删掉 Task 12 已经做过并验收过的 UI。
+> - 「报」页里 Task 12 已有一节叫「批次盈亏排行」（`src/ui/pages/ReportPage.tsx:154-179`，每批 `共 N 只 · 死亡 M 只 · 死亡率 X%`）。你要加的两节按行为 6 命名，**「死亡率趋势」不要与它重名**，并且**必须给出排行块没有的信息（百分点增减）**。**不要删掉 Task 12 已经做过并验收过的 UI**。
+> - Step 4 的 `git status --short` **此刻不会为空**（本任务新建的两个文件要到 Step 5 才提交）：判据是**除 `src/domain/stats.ts`、`src/domain/stats.test.ts`、`src/ui/pages/ReportPage.tsx` 外不得出现任何别的路径**。
+> - `react/only-export-components` 是 `warn`（`.oxlintrc.json:6`）而门禁要 `0 warnings`：**两节写成不导出的局部 JSX**，别在 `ReportPage.tsx` 里新增导出。另 `noUnusedLocals: true`：`costBreakdown` 用不到 `dogsOfBatch`，多 import 一个未使用的符号会让 `npm run build` 失败。
 
 **Steps:**
 - [ ] **Step 1**：写 `src/domain/stats.test.ts`（TDD，先跑一次看它失败）。
@@ -4495,9 +4519,12 @@ export function setBatchChannel(data: AppData, batchId: string, channel: Channel
 
 ### Task 21: 批次改名（消掉两条一模一样的下拉选项）
 
-**为什么有这一项**：Task 17 的实机走查发现——批次名由 `src/ui/pages/CalculatePage.tsx:44` 自动生成为 `` `收狗 ${input.n} 只` ``，狗号又是 `` `${batchName}-${i}` ``（`src/domain/planning.ts:105`）。用户同一天建两个**只数相同**的批次（很常见：上午收 2 只、下午又收 2 只），批次选择器里就会出现**两条读起来完全一样的选项**，狗号也会跨批次重名。账算不错（`id` 唯一、「检」页按批次分开显示），但用户没法在界面上分辨这两个批次，迟早会记错账。这是可用性缺陷，不是数据缺陷。
+**为什么有这一项**：Task 17 的实机走查发现——批次名由 `src/ui/pages/CalculatePage.tsx:109` 自动生成为 `` `收狗 ${input.n} 只` ``（`handleCreateBatch` 在 `:108`），狗号又是 `` `${batchName}-${i}` ``（`src/domain/planning.ts:105`）。用户同一天建两个**只数相同**的批次（很常见：上午收 2 只、下午又收 2 只），批次选择器里就会出现**两条读起来完全一样的选项**，狗号也会跨批次重名。账算不错（`id` 唯一、「检」页按批次分开显示），但用户没法在界面上分辨这两个批次，迟早会记错账。这是可用性缺陷，不是数据缺陷。
+（手动「新建」批次本来就能自己起名（`src/ui/pages/DogsPage.tsx:96-108`，`:103` 调 `createBatch(d, name, todayIso())`），所以这条只对**从决策台一键建**的批次成立。）
 
-> **实际撞在一起的是「检」页那个 `<select>`**（`src/ui/pages/QuarantinePage.tsx:82-90`，选项文本是 `{b.name}（{b.date}）`，同名同日就分不出来）。「狗」页的批次选择器是**按钮列表**（`src/ui/pages/DogsPage.tsx:111-133`），不是下拉。
+> **行号基准**：本节所有 `CalculatePage.tsx` / `DogsPage.tsx` 行号以 Task 18 的提交 **`9cf9ebb`** 为准（`CalculatePage.tsx` 354 行、`DogsPage.tsx` 492 行）。若当前 HEAD 更新，**先重新核一遍再动手**——Task 18 把这两个文件都重写过（上一版行号已全部过期）。
+
+> **实际撞在一起的是「检」页那个 `<select>`**（`src/ui/pages/QuarantinePage.tsx:82-90`，选项文本是 `{b.name}（{b.date}）`，同名同日就分不出来）。「狗」页的批次选择器是**按钮列表**（`src/ui/pages/DogsPage.tsx:111-140`），不是下拉。
 
 **Files:**
 - Modify: `src/domain/actions.ts`（**末尾追加**一个动作）
@@ -4527,9 +4554,24 @@ export function setBatchChannel(data: AppData, batchId: string, channel: Channel
 **必须满足的行为：**
 
 1. `renameBatch` 只改 `data.batches` 里那一批的 `name`；不碰 `dogs`、不碰 `entries`；`batches` 数组顺序不变；`batchId` 不存在时**返回传入的同一个对象引用**（与 `src/domain/actions.ts` 里既有动作保持一致）。
-2. **`renameBatch` 不得追溯修改狗号。** 每只狗的 `code` 在**建批次时**就写死了：批量按 `` `${batchName}-${i}` ``（`src/domain/planning.ts:105`），手动补录的狗按 `` `${batch.name}-补${dogs.length + 1}` ``（`src/ui/pages/DogsPage.tsx:314`）。它是这批狗的历史标识（对账单、清单、纸质记录上已经这么写了）。改批次名只让**以后**新建的批次好看，不改已有狗号——**这一点必须在代码注释里写清**，否则下一个人会以为是漏了。
-3. 「狗」页面上批次名要能就地改：点一下名字变成输入框，改完立刻保存（走 `update(d => renameBatch(d, b.id, name))`）。**名字留空或只含空白时不保存**（保留原名），并给一句提示，不要让用户以为改成功了。
-4. `CalculatePage` 建批次时的默认名从 `` `收狗 ${input.n} 只` ``（`src/ui/pages/CalculatePage.tsx:44`，注意变量是 `input.n` 不是 `n`）改成 **`` `收狗 ${input.n} 只 ${localTimeHm(now)}` ``**（例如 `收狗 2 只 14:07`）。时间取自 `handleCreateBatch` 里**已经存在**的那个 `new Date()`（`src/ui/pages/CalculatePage.tsx:45` 的 `const date = todayLocalIso(new Date())`——已核实这是该文件里**唯一**一处 `new Date()`，且位于事件处理器内、不在渲染期，符合 `## Global Constraints`），**复用同一个 Date 对象、不要新增第二个 `new Date()`**。同一分钟内建两个同只数批次仍会重名，这是可接受的——第 3 条让用户能自己改。
+2. **`renameBatch` 不得追溯修改狗号。** 每只狗的 `code` 在**建批次时**就写死了：批量按 `` `${batchName}-${i}` ``（`src/domain/planning.ts:105`），手动补录的狗按 `` `${batch.name}-补${dogs.length + 1}` ``（`src/ui/pages/DogsPage.tsx:331`）。它是这批狗的历史标识（对账单、清单、纸质记录上已经这么写了）。改批次名只让**以后**新建的批次好看，不改已有狗号——**这一点必须在代码注释里写清**，否则下一个人会以为是漏了。走查时「批次名改了、狗号还是旧名」**是刻意的，不是 bug**。
+3. 「狗」页的**批次详情**里批次名要能就地改：点一下名字进入编辑态（`<h1>` 换成 `<input>`），提交（回车或失焦）时走 `update(d => renameBatch(d, batch.id, name))`，**Esc 取消**。具体落点与结构：
+   - **只做详情视图。** 列表视图里整张批次卡片是 `<button>`（`src/ui/pages/DogsPage.tsx:116-131`），名字在 `:122` 且位于 button 内部，塞不进 `<input>`；列表里也没有消息位。
+   - 详情视图的 `<h1>{batch.name}</h1>` 在 `src/ui/pages/DogsPage.tsx:170`，紧跟其后的 `:171-189` 是 Task 18 刚加的「去向」下拉，**那一段一个字都不要动**。详情视图里的批次变量叫 `batch`（不是 `b`）。
+   - 结构要合法：`<h1>` 里放 `<button>` 是合法的（`button` 属于 phrasing content）；Tailwind 的 preflight 已经把 button 的边框与背景清掉了，不用另外写样式。
+   - **留空或只含空白时不写库**（保留原名），并在该视图内渲染一句红字提示（例如「批次名不能是空的」），不要让用户以为改成功了。
+   - 输入框绑**本地草稿**，`string | null`（`null` = 没在改），与 `src/ui/pages/SettingsPanel.tsx` 的草稿约定一致；**不要**把输入框直接绑到 `data` 上每个击键写库——重渲会把用户没打完的输入吃掉（Task 13 已经踩过这个坑）。
+4. `CalculatePage` 建批次时的默认名从 `` `收狗 ${input.n} 只` `` 改成 **`` `收狗 ${input.n} 只 ${localTimeHm(now)}` ``**（例如 `收狗 2 只 14:07`）。改法逐字如下——**必须复用同一个 `Date` 对象，不许新增第二个 `new Date()`，也不许把 `const now` 提到组件体（渲染期）**，提到渲染期会让 `npm run lint` 变红 `react(purity)`（见 `## Global Constraints`）：
+   ```ts
+   function handleCreateBatch() {                          // 现在在 :108
+     const now = new Date()                                // 必须留在事件处理器里
+     const name = `收狗 ${input.n} 只 ${localTimeHm(now)}`   // 现在 :109
+     const date = todayLocalIso(now)                        // 现在 :110
+     void update(d => createBatchFromPlan(d, input, name, date, selectedChannel))
+     setCreated({ name, channel: selectedChannel })
+   }
+   ```
+   同一分钟内建两个同只数批次仍会重名，这是可接受的——第 3 条让用户能自己改。
 5. 界面文案全中文。
 
 **测试要求**（`src/domain/actions.test.ts`，**必须显式 `import { describe, it, expect } from 'vitest'`**）：至少覆盖 —— 改名只影响那一批；不修改原数据；`batchId` 不存在时返回同一引用；`dogs` 与 `entries` 一字未动；**改批次名之后已有狗的 `code` 不变**（这条是给第 2 条钉桩的）。
