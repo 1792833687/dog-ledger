@@ -4224,6 +4224,13 @@ export function compareChannels(data: AppData, batchId: string, inputs: ChannelI
 > 3. **行为 5 里那个临时 `AppData` 的字面量字段名错了**：`AppData` 的形状是 `{ version: 1, settings: Settings, batches: Batch[], dogs: Dog[], entries: LedgerEntry[] }`（`src/domain/types.ts`），**没有 `ledger` 字段**，要写 `entries: []`；而且 `version` 与 `settings` 也是必填，构造临时对象时别漏（`settings` 直接用 `data.settings`）。
 > 4. 「一键建批次」的调用处就在 `src/ui/pages/CalculatePage.tsx` 里（`handleCreateBatch`），不是第三个文件。`createBatchFromPlan` 的签名是 `createBatchFromPlan(data: AppData, input: PlanInput, batchName: string, date: string, plannedChannel?: ChannelId): AppData`（`src/domain/planning.ts:83` 起，省略时用 `'undecided'`）。
 
+> **📌 待用户拍板的新合规要求（2026-10-03，读《犬产地检疫规程》全文时发现，**本任务不实现**）**
+> 规程 **4．1．3** 逐字：「已经取得产地检疫证明的犬，从**专门经营动物的集贸市场**继续出售或运输的，或者展示、演出、比赛后需要继续运输的，提供检疫申报单、**原始检疫证明和完整进出场记录**。」
+> **含义**：走犬市这条路，狗只要是在集贸市场里转手的，就**必须能拿出「进出场记录」**——不是只有一张证明的照片。本工具的批次模型里目前**没有放「进出场记录」的地方**（`Batch` 只有 `id`/`name`/`date`/`source`/`note`/`status`/`plannedChannel`，`Dog` 的检疫字段只有 6 个证明类字段）。
+> **现状**：`Batch.note` 与 `Batch.source` 是自由文本，用户**可以**把进出场信息写进备注里，但软件不会提醒他、也不会在他选「犬市」时提示要留这份记录。
+> **建议（未采纳，等用户定）**：给 `SALES_CHANNELS` 里 `dog_market` 那条加一个「选了这条路要留进出场记录」的提示，或给 `Dog`/`Batch` 加一个「进出场记录编号」字段。**这是一个独立的小任务，不要塞进 Task 18**——Task 18 只做渠道对照与 `plannedChannel` 的下拉。等用户决定后再开新任务。
+> 依据：`docs/compliance/2026-10-02-犬只交易合规要点-法规篇.md` §2.9 的逐字原文。
+
 **Consumes:** `compareChannels` / `ChannelInput` / `ChannelBreakdown`（`src/domain/channels.ts`，Task 16）；`batchPerDogCostFen` / `aliveCount`（`src/domain/costing.ts`）；`SALES_CHANNELS` / `ChannelId`（types.ts）；`formatMoney` / `fenToYuan` / `parseMoney`（`src/domain/money.ts`）。
 
 **必须满足的行为:**
