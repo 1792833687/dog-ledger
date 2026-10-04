@@ -4126,6 +4126,15 @@ export function compareChannels(data: AppData, batchId: string, inputs: ChannelI
   git commit -m "feat(domain): 渠道对照（与决策台共用摊薄算法）"
   ```
 
+> **Task 16 实施记录（2026-10-03，实施者 `afd57a0c-1165-4507-91a9-70ed3df3bfcc`，提交 `28f69a0`，`DONE`）**
+> 3 files / +260 / −1。门禁：`Test Files 19 passed (19)` / `Tests 417 passed (417)`（基线 18/402，+1 文件 / +15 测试，**无计划外文件**）、`tsc -b` 无输出 + `✓ 44 modules transformed`、`dist/assets/index-CgNq0k06.js 277.30 kB / gzip 84.42 kB`、`Found 0 warnings and 0 errors.`（54 files / 116 rules）、提交后 `git status --short` 空。TDD 红态逐字为 `Error: Cannot find module './channels' imported from .../src/domain/channels.test.ts`（`1 failed (1)` / `no tests`），与任务书预期一致。
+> 额外证据：`npx vitest run src/domain/costing.test.ts` → `15 passed (15)`，且 `git diff --stat -- src/domain/costing.test.ts` **输出为空**（重构后那 15 个测试一字未改，正是 Step 1 的要求）。
+> 落点（**行号整体 +10**，因为 `batchPerDogCostFen` 插在 `deadLoss` 与 `dilutedCostFen` 之间）：`src/domain/costing.ts:44-53` 新增 `batchPerDogCostFen`（`:50 alive = aliveCount(...)`、`:51 if (alive === 0) return 0`、`:52 return batchTotalCost(data, batchId) / alive`）；`src/domain/costing.ts:66` 改一行；`dilutedCostFen` 其余行（`:63 if (!dog) return own`、`:64 const alive = aliveCount(...)`、`:65 if (alive === 0) return own`）原样未动。**任务书里写的 `costing.ts:49-56` 现为 `costing.ts:60-67`，`:55` 现为 `:66`。** `src/domain/channels.ts` 49 行，`src/domain/channels.test.ts` 199 行 / 15 个 `it` / 3 个 `describe`。
+> 裁定 1 —— **测试里用 `runtimeInputs(json): ChannelInput[] { return JSON.parse(json) }`（`channels.test.ts:60-63`）造未知 `channelId`，接受。** 理由不是「绕开类型系统情有可原」，而是**它模拟的正是产品里真实存在的那条路径**：`src/storage/backup.ts:16` 的 `importBackup(json: string): AppData` 就是 `JSON.parse` 之后直接把 `data.batches`/`data.dogs`/`data.entries` 交给应用（`backup.ts:44-46`），**结构校验只查 `settings`/`batches`/`dogs`/`entries` 是不是对的类型，不查 `channelId` 取值**。所以旧备份或手改过的备份里出现 `taobao_live` 这种字符串是**真会发生的事**，行为 6 的回落逻辑是为它写的。备选写法（`as ChannelId`）正好被 brief 禁止，此写法更贴近现实。
+> 裁定 2 —— **`ChannelBreakdown` 不回显 `unitPriceFen`，保持逐字 interface，不加字段。** Task 18 渲染时输入数组 `inputs` 与结果数组按下标一一对应（行为 5 已把「顺序与 `inputs` 一致、不排序」钉成测试），界面拿得到两边，不需要回显。**但这是一处真实的耦合**：将来若有人给 `compareChannels` 加上排序或过滤，按下标配对就会错——所以「顺序与输入一致」这条测试必须一直在。若 Task 18 实施时发现按下标配对确实别扭，**那时再单独开一次接口改动**，不预先加字段。
+> 观察（无需处理）：`dilutedCostFen` 里 `:64` 的 `const alive` 现在只服务 `:65` 的 0 判断，整批死光时 `aliveCount` 被调用两次；行为不变、开销可忽略（brief 明令只改第 55 行）。
+> 遗留（控制器已核实，属设计选择非缺陷）：`channelId` 在类型上是 `ChannelId` 联合，但 **`Money = number` 且 `paidBy`/`category` 一样没有字面量保护**——运行期未知值只能靠回落分支兜住，不靠类型。
+
 ---
 
 ### Task 17: 「检」页面 + 底部导航接线
@@ -4223,12 +4232,14 @@ export function compareChannels(data: AppData, batchId: string, inputs: ChannelI
 > 2. **`plannedChannel` 已经在批次详情里显示了，但显示的是英文 id**：`src/ui/pages/DogsPage.tsx:171` 是 `{batch.date} · 去向：{batch.plannedChannel === 'undecided' ? '未定' : batch.plannedChannel}`——用户会看到 `去向：pet_shop`。**这是现存缺陷，本任务必须顺手修掉**：改走 `SALES_CHANNELS` 查中文名（`undecided` 仍显示「未定」），并把它做成可改的下拉（本任务行为 7）。
 > 3. **行为 5 里那个临时 `AppData` 的字面量字段名错了**：`AppData` 的形状是 `{ version: 1, settings: Settings, batches: Batch[], dogs: Dog[], entries: LedgerEntry[] }`（`src/domain/types.ts`），**没有 `ledger` 字段**，要写 `entries: []`；而且 `version` 与 `settings` 也是必填，构造临时对象时别漏（`settings` 直接用 `data.settings`）。
 > 4. 「一键建批次」的调用处就在 `src/ui/pages/CalculatePage.tsx` 里（`handleCreateBatch`），不是第三个文件。`createBatchFromPlan` 的签名是 `createBatchFromPlan(data: AppData, input: PlanInput, batchName: string, date: string, plannedChannel?: ChannelId): AppData`（`src/domain/planning.ts:83` 起，省略时用 `'undecided'`）。
+> 5. **`SALES_CHANNELS` 目前完全不在生产包里——本任务会是第一个真正 import 它的应用代码。** 控制器实测（提交 `71a0b49` 后 `npm run build`）：`dist/assets/index-CgNq0k06.js` 里搜不到 `犬只交易市场`、搜不到 `宠物店`、搜不到 `compareChannels`；唯一命中的是 `未定`（来自别处的 `plannedChannel` 文案）。原因不是打包器丢字段，而是**全仓没有任何应用代码引用它**（`channels.ts:2` 只有 `channels.test.ts` 这条测试链引用，`types.test.ts` 也是测试），所以整份常量被 tree-shake 掉了。**后果**：接线之后**必须重新 build 并在真实浏览器里确认 8 条渠道的中文名与 `note` 真的显示出来了**——单测跑的是源码，能过；生产包里是不是真有这些字符串，只有看构建产物或真机才知道。这也是为什么 Task 18 的走查不能只跑 `npx vitest run`。
 
-> **📌 待用户拍板的新合规要求（2026-10-03，读《犬产地检疫规程》全文时发现，**本任务不实现**）**
+> **📌 犬市「进出场记录」——已拍板（2026-10-03 用户决定，同日已实现，提交 `71a0b49`）**
 > 规程 **4．1．3** 逐字：「已经取得产地检疫证明的犬，从**专门经营动物的集贸市场**继续出售或运输的，或者展示、演出、比赛后需要继续运输的，提供检疫申报单、**原始检疫证明和完整进出场记录**。」
-> **含义**：走犬市这条路，狗只要是在集贸市场里转手的，就**必须能拿出「进出场记录」**——不是只有一张证明的照片。本工具的批次模型里目前**没有放「进出场记录」的地方**（`Batch` 只有 `id`/`name`/`date`/`source`/`note`/`status`/`plannedChannel`，`Dog` 的检疫字段只有 6 个证明类字段）。
-> **现状**：`Batch.note` 与 `Batch.source` 是自由文本，用户**可以**把进出场信息写进备注里，但软件不会提醒他、也不会在他选「犬市」时提示要留这份记录。
-> **建议（未采纳，等用户定）**：给 `SALES_CHANNELS` 里 `dog_market` 那条加一个「选了这条路要留进出场记录」的提示，或给 `Dog`/`Batch` 加一个「进出场记录编号」字段。**这是一个独立的小任务，不要塞进 Task 18**——Task 18 只做渠道对照与 `plannedChannel` 的下拉。等用户决定后再开新任务。
+> **含义**：走犬市这条路，狗只要是在集贸市场里转手的，就**必须能拿出「进出场记录」**——不是只有一张证明的照片。本工具的批次模型里**没有放「进出场记录」的地方**（`Batch` 只有 `id`/`name`/`date`/`source`/`note`/`status`/`plannedChannel`，`Dog` 的检疫字段只有 6 个证明类字段）。
+> **用户的选择（三个选项里的第一个）**：**只在渠道说明里补一句**，不动数据结构、不加字段。理由是不值得为一个还没决定要不要走的渠道先加一个空字段。
+> **已实现**：`src/domain/types.ts:40` 的 `dog_market` 那条 `note` 由「摊位费按次摊；城区是否禁活体交易必须先本地核实。」改为「摊位费按次摊；城区是否禁活体交易必须先本地核实。**从市场转手时要能拿出原始检疫证明和完整进出场记录（《犬产地检疫规程》4.1.3）。**」`SalesChannelDef.note` 的注释本来就是「这条渠道特有的成本或风险，显示在渠道对照表里」，语义对得上。`types.test.ts:58` 的 `expect(c.note.length).toBeGreaterThan(0)` 仍然通过。
+> **仍然没有做的事**：没有给 `Dog`/`Batch` 加「进出场记录编号」字段，没有在用户选「犬市」时弹提示。**若将来真走犬市**，`Batch.note` 是唯一能写的地方（自由文本，软件不会提醒）——那时再开新任务加字段。
 > 依据：`docs/compliance/2026-10-02-犬只交易合规要点-法规篇.md` §2.9 的逐字原文。
 
 **Consumes:** `compareChannels` / `ChannelInput` / `ChannelBreakdown`（`src/domain/channels.ts`，Task 16）；`batchPerDogCostFen` / `aliveCount`（`src/domain/costing.ts`）；`SALES_CHANNELS` / `ChannelId`（types.ts）；`formatMoney` / `fenToYuan` / `parseMoney`（`src/domain/money.ts`）。
