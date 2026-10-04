@@ -4304,7 +4304,7 @@ export function compareChannels(data: AppData, batchId: string, inputs: ChannelI
 
 > **Task 19 派发前审计（2026-10-03，控制器核对了实际代码；2026-10-03 二次修订，因为 Task 13 改了面板的写法）**
 > - `validateSettings`（`src/domain/settlement.ts:51-62`）**已经**有 `quarantinePerDog` 与 `disposalPerDog` 两条（第 59、60 行，合规修订时加的），所以本任务只追加两条新的是对的，**不要去改那两条**。现有 6 条的写法与顺序：合伙人非空 → 分成和 = 1 → `targetMarginRate` → `expectedMortalityRate`（注意它是 `>= 0 && < 1`，不是 `>= 0`）→ `quarantinePerDog` → `disposalPerDog`。新两条追加在**末尾**。
-> - **这个函数是「遇到第一个错就 return」**，所以两条新校验排在末尾意味着：分成比例填错时用户看不到「天数不能为负」的提示。这是既有风格，本任务**不要**改成收集全部错误——那会连带改动 Task 5 已验收的行为与它的 9 个测试。
+> - **这个函数是「遇到第一个错就 return」**，所以两条新校验排在末尾意味着：分成比例填错时用户看不到「天数不能是负数」的提示。这是既有风格，本任务**不要**改成收集全部错误——那会连带改动 Task 5 已验收的行为与它的 9 个测试。
 > - **⚠️ 原审计里那条「照抄 `targetMarginRate` / `expectedMortalityRate` 的 `if (v.trim() === '') return` 写法」已经过期。** Task 13 把「设置」面板的 6 个输入框全部改成了**本地草稿**制（见 Task 13 实施记录），现在 `目标毛利率` 那一段是 `setMarginDraft(v)` + `applyPercentInput(v)` + `ratio === null` 就不写账。两个新输入框**必须沿用同一套**：往 `src/ui/settingsForm.ts` 里加第三种（第四种）输入类型 `'days'`——
 >   ```ts
 >   /** 天数的解析与显示。空串、非数字、负数、非整数都不收。 */
@@ -4317,6 +4317,17 @@ export function compareChannels(data: AppData, batchId: string, inputs: ChannelI
 > - 行为 4（「改完保存后「检」页面的阶段判定立刻反映新值」）**不需要额外订阅或刷新代码**：`useAppData` 的 `update` 写进同一个 context，两个页面读的是同一份 `data.settings`。控制器的浏览器走查会验它。
 > - **不要碰 `src/App.tsx`、`src/domain/quarantine.ts`、`src/domain/types.ts`。** `validateSettings` 的返回类型是 `string | null`，两条新校验的文案必须**逐字**是 `'狂犬免疫后等待天数不能为负'` 与 `'检疫申报提前天数不能为负'`。
 > - 提交用 5 个显式路径（见 Step 6）。
+
+> **Task 19 实施记录（2026-10-04，实施者 `600058ed`，`DONE`）**
+> - 提交 **`dca0b39 feat(ui): 设置面板补检疫天数并校验`**，5 files / +151 / −5，父提交 `b1df13b`。门禁：`Test Files 18 passed (18)` / `Tests 402 passed (402)`（基线 390，净 +12：settlement +4、settingsForm +8）；`tsc -b` 无输出 + `✓ 44 modules transformed`（277.27 kB / gzip 84.41 kB）；`Found 0 warnings and 0 errors.`（52 files / 116 rules）；`git status --short` 空。
+> - TDD 红态：`src/domain/settlement.test.ts` 先 `Tests 3 failed | 10 passed (13)` 全部 `expected null to be '狂犬免疫后等待天数不能为负'`；`src/ui/settingsForm.test.ts` 先 `Tests 8 failed | 26 passed (34)`（`TypeError: applyDaysInput is not a function` ×6）。
+> - 落点：`src/domain/settlement.ts:63-64`（第 62 行 `return null` 之前，现有 6 条一字未动）；`src/domain/settlement.test.ts:99-118`（两个 −1、两个 `NaN`、0 合法）；`src/ui/settingsForm.ts:18`（`InputKind` 加 `'days'`）、`:74-78`（`applyDaysInput`）、`:102-108`（穷尽 `case 'days'`）；`src/ui/settingsForm.test.ts:117-152` + `:167-181`；`src/ui/pages/SettingsPanel.tsx:7` / `:32-33`（两份独立草稿）/ `:155-192`（`<h3>检疫天数</h3>` 一组，位于「默认每只病死犬处理费」之后、`<h3>成本项</h3>` 之前）。
+> - **唯一偏离已裁定：`inputError('days', '-1')` 的文案用 `'天数不能是负数'`（本审计 blockquote 的版本），不是派发 brief 正文里的 `'天数不能为负'`。** 实施者按「整段 blockquote 是硬性要求」选择，且它与既有 `'金额不能是负数，还不知道就填 0'` 风格一致 —— **保留 `'天数不能是负数'`**，本文档第 4307 行原先那处引用也已同步改掉。
+> - **`applyDaysInput('2.')` → `{ draft: '2.', days: 2 }`（写账 2），这是文档化行为不是缺陷**：`Number('2.')` 就是有限整数 2，整数字段不存在「小数点没打完」这个中间态（与 Task 13b 里 `12.` 对**百分比**字段的处理不同——那里是合法的中间态）。`21.5` / `0.5` / `-1` / `''` / `abc` / `1e999` 全部被拒且不写账。实施者最初把 `'2.'` 当成「打到一半」写进测试并跑红，核对后**改的是测试不是实现**，理由写在 `src/ui/settingsForm.test.ts:145-148` 的注释里。
+> - **Task 19 真实浏览器走查：`72/72 PASS`、`Runtime.exceptionThrown: 0`、`console.error: 0`。** 探针 `C:\Users\17928\AppData\Local\Temp\dogledger-t19.mjs`（`PORT = 9347`、`--headless=new`、真实时间 + 真实 IndexedDB；沿用既有模式 `spawn(EDGE, [...], { stdio: 'ignore' })`）。本轮**新增「播种」手法**（对写页面流程不便到达的状态很有用）：全新 profile 下启动 → 断言 `hasRecord() === false` → 直接用 `indexedDB.open('dog-ledger', 1)` 往 `appdata`/`singleton` 写一份完整 `AppData`（1 个批次 + 3 只狗：`d1` 今天接种、`d2` 21 天前接种且今天已检测、`d3` 有证明有效期 +30 天）→ `Page.reload` → 走查。
+> - 走通：设置块的小节恰好是 `['目标与预估','检疫天数','成本项']`；两个新框 `inputMode="numeric"`、后缀 `天`、值 `21`/`3`，**DOM 顺序夹在「默认每只病死犬处理费」与「成本项」之间**；等待天数说明含「默认 21 不是法定天数」与《犬产地检疫规程》，提前天数说明含《动物检疫管理办法》第八条第二款 +《犬产地检疫规程》4.1；「检」页基线 `d1` 等待抗体检测期 + 还要等 21 天、`d2` 待申报检疫 + 提前 3 天、`d3` 可出售、清单「在库 3 只里有 2 只不能卖」；**等待天数改 `0` → `d1` 立刻变「可以送检」且不再显示「还要等 N 天」**（不刷新不重启）；改回 21 恢复；**清空 → 框里空串、无红字、框不标红底、库里 `rabiesWaitDays` 仍是 21**（★ 本任务要防的那个坑，实测没被写成 0），「检」页仍是「还要等 21 天」；`abc`/`21.5`/`-1`/`0.5` 四种各出专属红字 + 标红底 + **框里原样保留** + **库里一字未写**；`2.` 无红字并按 2 写账；清空提前天数**不影响等待天数那个框**（独立草稿），且不写账；提前天数改 5 → **「检」页 `d2` 立刻变成「提前 5 天向当地动物卫生监督机构申报」**（行为 4 的实时联动成立），改回 3 后阶段标签不受影响；reload 后两个天数、3 只狗、1 个批次全在，不卡「正在载入」。
+> - 本轮唯一 FAIL 又是**探针自己的断言位置写错**（同类第 6 次）：把「框里原样保留 abc」的断言写在了 `for` 循环**外面**，那时循环最后一轮已把框设成 `0.5`，所以拿到的是 `"0.5"` 而不是 `"abc"`。改成在循环内逐次断言后 `72/72`。**教训同前：探针断言失败时先核探针自己的过滤条件、取值时机与算术。**
+> - 遗留（接受，均非缺陷）：`applyPercentInput('12.')` 会立刻写账 0.12 而 `applyDaysInput('2.')` 会立刻写账 2，两者对**尾点**的处理不同——百分比字段的 `12.` 是合法中间态（Task 13b 已裁定接受红字闪一下），整数字段没有这个状态，**故意不动**。
 
 ---
 
