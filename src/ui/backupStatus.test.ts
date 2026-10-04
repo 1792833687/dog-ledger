@@ -11,6 +11,12 @@ describe('daysSinceBackup', () => {
   it('三天前返回 3', () => {
     expect(daysSinceBackup('2026-09-30T08:00:00Z', new Date('2026-10-03T09:00:00Z'))).toBe(3)
   })
+  // 界面上的 now 是挂载时取的（useState 惰性初始化，渲染体里不许调 new Date()），
+  // 而 lastBackupAt 是点完导出才写进去的 —— 于是刚导完那一瞬间 lastBackupAt 比 now 晚，
+  // 差值算出来是 -1，面板会显示「-1 天前备份过」。天数没有负的，按 0 算。
+  it('备份时间比 now 还晚（刚点完导出）→ 按 0 算，不出现负数', () => {
+    expect(daysSinceBackup('2026-10-03T09:00:01Z', new Date('2026-10-03T09:00:00Z'))).toBe(0)
+  })
 })
 
 describe('shouldWarnBackup', () => {
@@ -25,5 +31,8 @@ describe('shouldWarnBackup', () => {
   })
   it('1 天前备份过 → 不警告', () => {
     expect(shouldWarnBackup('2026-10-02T08:00:00Z', 5, new Date('2026-10-03T09:00:00Z'))).toBe(false)
+  })
+  it('备份时间比 now 还晚（刚点完导出）→ 不警告', () => {
+    expect(shouldWarnBackup('2026-10-03T09:00:01Z', 5, new Date('2026-10-03T09:00:00Z'))).toBe(false)
   })
 })
