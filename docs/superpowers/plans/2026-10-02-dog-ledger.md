@@ -4622,7 +4622,7 @@ export function setBatchChannel(data: AppData, batchId: string, channel: Channel
 
 > **这一组任务的由来。** 第一版（Task 1–21）已上线并在真机上用起来了。用户用了一段时间后提了三件事（原话）：「我们找到的狗还没有合适的年龄段就预定了……等长到两个月大我们会去收，**等于是有一批预定单**」「我希望是我们**先做后才生成账目表再记录**的」「还有些功能细节也帮我完善（＝**流水能改能删**）」。设计已按 `docs/superpowers/specs/2026-10-02-dog-trading-ledger-design.md` 的**修订三**（D13–D16、§3.9/§3.10/§3.11）写定，并经一轮只读审查改定（提交 `a2f830b` → `c169327`）。**任务书里凡是与代码冲突的断言，都以那轮审查的复核结论为准**——尤其：`refundedCurrentSale` **不改**、金额**不新立"必须 > 0"**、`createBatchFromPlan` **删除而不是保留**。
 >
-> **顺序（任务编号是身份，不是执行顺序）**：`22 → 23 → 24 → 25 → 26 → 27 → 28 → 29 → 30`。前五个是纯域层（每一步都能独立跑测试），20 号之后才碰界面，因为界面依赖的签名必须先生效。**Task 30 是收尾与重新上线**：`### Task 14` 的内容（备份安全网、PWA、DEPLOY.md、README）**已在第一版落地并上线**，本组任务不再重做它，改完之后按 Task 30 重新构建与推送即可。
+> **顺序（任务编号是身份，不是执行顺序）**：`22 → 23 → 23b → 24 → 25 → 26 → 27 → 27b → 28 → 29 → 30`（**23b** 与 **27b** 是控制器在复核 Task 23 / 派发 Task 27 时发现的两个缺口：前者是 `leadDays` 为负或 `NaN` 时 `addDays` 会抛 `RangeError`，后者是 `preOrderLeadDays` 根本没有界面能改——都已写成独立任务，见各自小节）。前五个是纯域层（每一步都能独立跑测试），20 号之后才碰界面，因为界面依赖的签名必须先生效。**Task 30 是收尾与重新上线**：`### Task 14` 的内容（备份安全网、PWA、DEPLOY.md、README）**已在第一版落地并上线**，本组任务不再重做它，改完之后按 Task 30 重新构建与推送即可。
 >
 > **这一组的头号风险是数据，不是功能。** 用户手机上有真实数据，线上站址已在使用。所以 Task 22 排在第一位、并且是**唯一**允许碰 `AppData` 形状的任务；它必须做到：老数据照常打开、老备份照常恢复、**新备份（含预定单）能原样还原**。
 
@@ -4691,6 +4691,13 @@ export function setBatchChannel(data: AppData, batchId: string, channel: Channel
   git commit -m "feat(domain): 预定单类型与老数据补齐（修订三 D16）"
   ```
 
+> **Task 22 实施记录（2026-10-06）。** 提交 `f5959f8 feat(domain): 预定单类型与老数据补齐（修订三 D16）`（9 files / +268 / −1）+ 补正提交 `694a2e1 fix(domain): 成本项空数组回落内置项；老数据用例去掉类型断言`（3 files / +31 / −8）。
+> - 门禁：`Test Files 23 passed (23)` / `Tests 520 passed (520)`、`✓ 52 modules transformed` + `✓ built in 226ms`、`npm run lint` 0 warnings 0 errors（**经 pwsh 管道捕获时不打印统计行，是 oxlint 的 TTY 检测，不是失败**）、`git status --short` 空。
+> - 落点：`src/domain/types.ts:88`（`Settings.preOrderLeadDays`）、`:186`（`AppData.preOrders`）、`:223`（默认 3）、`:233`（`preOrders: []`）；新建 `src/domain/normalize.ts`（`normalizeAppData`）；`src/state/persistence.ts:13-18` 改走 `normalizeAppData`；`src/storage/backup.ts:50` 白名单补 `preOrders: data.preOrders ?? []`。
+> - **第 9 个被迫改的文件**：`src/ui/planForm.test.ts:14` 是手写全字段的 `Settings` 字面量，`tsc -b` 报 `error TS2741: Property 'preOrderLeadDays' is missing ... but required in type 'Settings'`，照实补字段。**以后给 `Settings`/`AppData` 加必填字段，所有"完全手写字面量"（不是展开写法）都会在 `tsc -b` 处报 TS2741。**
+> - 控制器两处裁定（都已办）：①`costItems` 空数组回落内置项 —— 本仓**没有任何删除成本项的入口**，空数组只可能来自手改或坏数据，透传会让「钱」「狗」两页的支出类别下拉变成零个选项；与 `importBackup` 白名单逐字同口径，而 `partners` 空数组是真实状态要保留（两条区别各有断言）。②老数据用例改成从 `DEFAULT_DATA` 克隆后 `Reflect.deleteProperty` 删键，去掉 `as unknown as`。
+> - 留下的硬提醒：`status` / `receivedCount` / `receivedBatchId` 是**只读三件套**，只能由收货与取消两个 action 写；`normalizeAppData`（读本机存储）与 `importBackup` 白名单（导入备份）是**两条独立补齐路径，导入不经过 normalize**，以后加字段必须同时改两处 + 两处测试。
+
 ---
 
 ### Task 23: 预定单纯函数（阶段推导、提醒计数、排序）与增删改动作
@@ -4756,6 +4763,52 @@ export function setBatchChannel(data: AppData, batchId: string, channel: Channel
   git add src/domain/preOrders.ts src/domain/preOrders.test.ts src/domain/actions.ts src/domain/actions.test.ts
   git commit -m "feat(domain): 预定单阶段推导与增删改动作"
   ```
+
+> **Task 23 实施记录（2026-10-06）。** 提交 `b1f4fd2 feat(domain): 预定单阶段推导与增删改动作`（4 files / +652 / −2）。
+> - 门禁：`Test Files 24 passed (24)` / `Tests 563 passed (563)`（+43：`preOrders.test.ts` 19 条、`actions.test.ts` 24 条）、`✓ 52 modules transformed`（**与 Task 22 同数、chunk 哈希也一样 —— `preOrders.ts` 还没有界面 import，进不了 bundle，Task 27 接上后应变 53；如果那时还是 52，说明界面没真的引用上**）、lint 0/0（66 files）、树干净。
+> - 落点：`src/domain/preOrders.ts:19/22/36/47/63/77`（类型、`DATE_SHAPE`、`preOrderStage`、`duePreOrderCount`、`groupOf`、`preOrderList`）；`src/domain/actions.ts:313/338/370/385/410/428`（`AddPreOrderInput`、四个动作，追加在 `renameBatch` 之后，既有 16 个导出一字未动）。
+> - **形状校验放在 `addDays` 之前**（`:40`）——`addDays` 对空串/`'不是日期'` 会抛 `RangeError: Invalid time value`，坏数据不能把界面搞白屏。这条是控制器派发时补进去的，任务书原文没有。
+> - 三处偏离全部保留：`AddPreOrderInput` 抽成具名 `interface`（与 `DogQuarantinePatch` 同体例，测试里要能引用）；已收货 + `patch.note === undefined` 时返回**同一引用**（与全仓「没改动就返回同一引用」一致）；未收货走既有泛型助手 `keepOrSet`（`actions.ts:184`，与 `setDogQuarantine` 同口径）。
+> - 三处请示裁定：①`leadDays` 为负或 `NaN` → **要修**，见 Task 23b；②`overdue`/`due_soon` 合组后**不按状态再排**（同一天不可能既是 overdue 又是 due_soon，组内不需要状态优先级）；③`'2026-02-30'` 这类"形状对、日历上不存在"的串**刻意不校验**（真实录入走 `<input type="date">`，手改数据最坏是"日子挪几天"，不值得写闰年逻辑）。
+> - 留给 Task 27 的风险：`deletePreOrder` 对已收货返回同一引用，**界面必须自己按 `status` 决定显示哪些按钮**（否则点了没反应也没提示）；`preOrderList` 返回的 `.order` 是原对象引用，界面只能读不能就地改；`updatePreOrder` 的白名单是按 `status` 手写分支的，将来 `PreOrder` 加可修改字段必须同时改两处。
+
+---
+
+### Task 23b: `preOrderStage` 挡掉负数与 `NaN` 的提前天数
+
+**Goal:** 封住 Task 23 留下的两个坏格子。`preOrderStage` 里 `addDays(order.collectDate, -leadDays)` 的 `leadDays` 直接来自 `data.settings.preOrderLeadDays`（老数据手改、或将来某个入口写脏都可能给出非法值）：
+- **`NaN`**：`-NaN` 传给 `addDays` → `base.setUTCDate(NaN)` → `toISOString()` 抛 `RangeError: Invalid time value`。
+- **负数**（如 -1）：不会抛，但语义反了 —— `-(-1) = 1`，提醒窗口被推到**收狗日之后一天**，于是 `collectDate === today` 当天返回 `'upcoming'`（**当天不提醒**），只有第二天才变 `'overdue'`。
+
+**Files:**
+- Modify: `src/domain/preOrders.ts`
+- Modify: `src/domain/preOrders.test.ts`
+
+**必须满足的行为**
+- `preOrderStage` 里把提前量先归一化再用：
+  ```ts
+  // Number.isFinite 一起挡掉 NaN：Math.max(0, NaN) 仍然是 NaN，加了它等于没加。
+  const lead = Number.isFinite(leadDays) && leadDays > 0 ? leadDays : 0
+  ```
+  之后用 `lead` 代替 `leadDays`。语义：负数与 `NaN` 都当 0（只有当天算 `due_soon`），因为「提前几天提醒」是提前量，-1 没有意义。
+- 任务书 4731「`leadDays <= 0` 时只有当天算 `due_soon`」**从此在实现上成立**；4729 的判定顺序按「合法的 `leadDays`」理解。
+
+**测试要求**
+- `leadDays = -1` + `collectDate === today` → `'due_soon'`（**不是 `overdue`**）。
+- `leadDays = NaN` + `collectDate === today` → `'due_soon'` 且**不抛**。
+- 既有 19 条一条不改。
+
+**Steps**
+- [ ] **Step 1**：先写两条失败测试（红态：`RangeError: Invalid time value`）。
+- [ ] **Step 2**：改 `src/domain/preOrders.ts`。
+- [ ] **Step 3**：四条门禁。
+- [ ] **Step 4**：`git add src/domain/preOrders.ts src/domain/preOrders.test.ts` + `git commit -m "fix(domain): 预定单提醒天数挡掉负数与 NaN"`。
+
+> **Task 23b 实施记录（2026-10-06）。** 提交 `3bef499 fix(domain): 预定单提醒天数挡掉负数与 NaN`（2 files / +32 / −1）。
+> - 落点：`src/domain/preOrders.ts:47` `const lead = Number.isFinite(leadDays) && leadDays > 0 ? leadDays : 0`（放在 `cancelled`/`received` 之后、形状校验之前），`:51` 改用它。JSDoc 写明了**为什么不能写 `Math.max(0, leadDays)`**（`Math.max(0, NaN)` 还是 `NaN`）。
+> - 门禁：24 files / `Tests 565 passed (565)`（+2）、`✓ 52 modules`、lint 0/0 on 66 files、树干净（除控制器自己的计划书改动）。
+> - 红态实测：`leadDays = -1` + 当天 → `AssertionError: expected 'upcoming' to be 'due_soon'`；`leadDays = NaN` + 当天 → `RangeError: Invalid time value`。**这正是控制器更正后的事实**（负数不抛，只有 `NaN` 抛）。
+> - 顺带落实的三条注释：`overdue`/`due_soon` 合组不排状态优先级（`today > collectDate` 与 `today === collectDate` 互斥）、`'2026-02-30'` 刻意不做日历校验、判定顺序以「合法 `leadDays`」为前提。
 
 ---
 
@@ -4979,6 +5032,42 @@ export function setBatchChannel(data: AppData, batchId: string, channel: Channel
   ```bash
   git add src/ui/preOrderForm.ts src/ui/preOrderForm.test.ts src/ui/pages/DogsPage.tsx
   git commit -m "feat(ui): 预定单区（记单、提醒、收货、黄了）"
+  ```
+
+---
+
+### Task 27b: 预定单提醒天数进设置（`validateSettings` + 设置面板）
+
+**Goal:** `Settings.preOrderLeadDays` 在 Task 22 只落了类型与默认值，**全仓没有任何界面能改它**，而设计 §3.9 / §10 写的是「想提前一周就在设置里改数字」。把它接进设置面板，并让负数进不了 `AppData`。
+
+**为什么有这一条任务：** 控制器在 Task 23 复核时逐文件 grep 了 `preOrderLeadDays`，发现它只出现在 `types.ts` / `normalize.ts` / `backup.ts`（都是 Task 22 的读路径）与 `preOrders.ts`（Task 23 的推导），**`SettingsPanel.tsx` 与 `settlement.ts` 里一次都没有** —— 也就是说用户看到「该去收了」的提前量是硬编码般的 3 天，与 `rabiesWaitDays` / `quarantineLeadDays` 那两个"可改设置"不一致。这是设计承诺与实现之间的缺口，补它。
+
+**Files:**
+- Modify: `src/domain/settlement.ts`（`validateSettings` 末尾追加一行）
+- Modify: `src/domain/settlement.test.ts`
+- Modify: `src/ui/pages/SettingsPanel.tsx`
+
+**Interfaces:**
+- Consumes: `Settings.preOrderLeadDays`（Task 22）、`updateSettings`（`src/domain/actions.ts:218`）、设置面板既有的 `inputError('days', …)` / `applyDaysInput`（`SettingsPanel.tsx:157-191` 那两条字段的写法）
+- Produces: 无新导出
+
+**必须满足的行为**
+- `validateSettings` 追加 `if (!(settings.preOrderLeadDays >= 0)) return '预定单提醒提前天数不能为负'`（`!(x >= 0)` 同时拦 `NaN`，与既有两条同风格，**不要**写成 `settings.preOrderLeadDays < 0`）。
+- `SettingsPanel.tsx` 新增一个 `<h3>`「预定单」区与一行数字输入「预定单提前几天提醒」（`suffix="天"`、`inputMode="numeric"`），结构与「申报检疫提前天数」逐字同体例：一个 `preOrderLeadDaysDraft` state、`error={preOrderLeadDaysDraft === null ? undefined : inputError('days', draft)}`、`applyDaysInput` 返回 `days === null` 时**不写账只出红字**、合法时 `void update(d => updateSettings(d, { preOrderLeadDays: days }))`。
+- 字段下面一行灰字说明：「默认 3 天。想提前一周就改成 7。」（**不要**写「法定 3 天」——这个数字是本工具的提醒提前量，没有任何法条依据。）
+
+**测试要求**（`settlement.test.ts`）
+- `preOrderLeadDays: -1` → 逐字 `'预定单提醒提前天数不能为负'`；`preOrderLeadDays: NaN` → 同一条；`0` → 合法（返回 `null`，与既有两个天数设置一致：0 = 设在当天）。
+- 既有断言一条都不改。
+
+**Steps**
+- [ ] **Step 1**：先写两条失败测试（红态：`expected undefined to be '预定单提醒提前天数不能为负'` 或 `validateSettings` 返回 `null`）。
+- [ ] **Step 2**：改 `src/domain/settlement.ts` 与 `src/ui/pages/SettingsPanel.tsx`。
+- [ ] **Step 3**：`npx vitest run` / `npm run build` / `npm run lint` / `git status --short`。
+- [ ] **Step 4**：提交：
+  ```bash
+  git add src/domain/settlement.ts src/domain/settlement.test.ts src/ui/pages/SettingsPanel.tsx
+  git commit -m "feat(ui): 预定单提醒提前天数进设置"
   ```
 
 ---
