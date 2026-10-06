@@ -1,13 +1,22 @@
 import { useState } from 'react'
 import { useAppData } from '../../state/useAppData'
 import { batchSummary, dogsOfBatch, dilutedCostFen, dogIncome, dogProfitFen } from '../../domain/costing'
-import { sellDog, markDogDead, setDogStatus, createBatch, addExpense, setBatchChannel, renameBatch } from '../../domain/actions'
+import {
+  sellDog, markDogDead, setDogStatus, createBatch, addExpense, setBatchChannel, renameBatch,
+  addPreOrder, updatePreOrder, cancelPreOrder, deletePreOrder, receivePreOrder,
+} from '../../domain/actions'
 import { formatMoney, parseMoney } from '../../domain/money'
 import { newId } from '../../domain/types'
+import type { PreOrder } from '../../domain/types'
+import { duePreOrderCount, preOrderList } from '../../domain/preOrders'
+import type { PreOrderStage } from '../../domain/preOrders'
 import { Modal } from '../components/Modal'
-import { todayLocalIso } from '../planForm'
+import { ConfirmDialog } from '../components/ConfirmDialog'
+import { todayLocalIso, localTimeHm } from '../planForm'
 import { isOnHand, refundedCurrentSale } from '../dogLedger'
-import { channelOptions, findChannel } from '../channelView'
+import { channelOptions, findChannel, parseAliveInput } from '../channelView'
+import { canSubmitPreOrder, draftFromOrder, draftIssue, emptyPreOrderDraft, preOrderInput, preOrderPatch } from '../preOrderForm'
+import type { PreOrderDraft } from '../preOrderForm'
 
 /**
  * 「狗」页面 —— 批次台账。
@@ -18,11 +27,38 @@ import { channelOptions, findChannel } from '../channelView'
  * 记账一律走 `Modal` + 中文表单，不用 `window.prompt`：记账是最高频的动作，
  * 弹三个系统框、还要用户手打英文成本项，第二天就不会有人再记了。
  * 成本项下拉直接读 `data.settings.costItems`，与「钱」页面共用同一套选项。
+ *
+ * 列表视图顶部另挂一块**预定单区**（设计 §3.9）：还没拉回来的狗先记一张单子，
+ * 到了日子在页面上提醒去收，收回来就地把这张单子变成一批狗（批次名、只数、
+ * 每只收购价都从收货那一步来），不做了就标「黄了」。它只活在列表视图里。
  */
 
 const STATUS_LABEL: Record<string, string> = {
   in_stock: '在库', sold: '已售', dead: '死亡', returned: '退回',
 }
+
+/**
+ * 预定单的四种说法（设计 §3.9）。`due_soon` 与 `overdue` 说同一句话「该去收了」：
+ * 对要出门收狗的两个人来说，「还有两天」和「已经过了两天」要做的事是同一件 ——
+ * 打电话、出门、把狗拉回来；分成两句反而要多想一秒。区别只体现在颜色上。
+ */
+const PRE_ORDER_STAGE_LABEL: Record<PreOrderStage, string> = {
+  upcoming: '还没到日子',
+  due_soon: '该去收了',
+  overdue: '该去收了',
+  received: '已收货',
+  cancelled: '黄了',
+}
+
+const PRE_ORDER_STAGE_CLASS: Record<PreOrderStage, string> = {
+  upcoming: 'text-gray-400',
+  due_soon: 'text-red-500',
+  overdue: 'text-red-500',
+  received: 'text-emerald-600',
+  cancelled: 'text-gray-400',
+}
+
+const PRE_ORDER_FORM_INPUT = 'w-full rounded-lg bg-gray-100 px-3 py-2 text-sm outline-none'
 
 /**
  * 本机时区的今天，`YYYY-MM-DD`。不要用 `toISOString().slice(0, 10)`——那是 UTC，
@@ -62,6 +98,30 @@ export function DogsPage() {
   // —— 那是 A 留下的，用户会以为 B 的名字被弄坏了（库里其实一个字都没改）。
   const [batchNameDraft, setBatchNameDraft] = useState<string | null>(null)
 
+  // ── 预定单区（设计 §3.9）的状态 ────────────────────────────────────────────
+  // 界面要拿「今天」判断哪张单子该去收了，但 `new Date()` 是 impure 的，放在渲染体里
+  // 会被 lint 的 react(purity) 拦下（本仓门禁 0 warning），重新渲染还会拿到「另一个今天」。
+  // 所以按「钱」「检疫」「报」三页的体例，用惰性 useState 取一次、这一屏内当常量用。
+  // 真正写账那一刻的「现在」仍然在事件处理器里现取（`todayIso()` / 收货那一段）。
+  const [today] = useState(() => todayLocalIso(new Date()))
+  // 表单草稿：`null` = 表单收起。一份草稿只属于「正在编辑的那张单子」，
+  // 所以打开任何一处之前都先 `closePreOrderPanels()`，收起时也把它丢掉。
+  // 不这么做就会出现 Task 21b 那个批次名草稿的同类缺陷：点开 B 单，
+  // 框里是 A 单没提交的内容，用户会以为 B 单被改了（账上其实一个字没动）。
+  const [preOrderDraft, setPreOrderDraft] = useState<PreOrderDraft | null>(null)
+  // `null` = 正在新建；非 `null` = 正在改这张单子（已收货的单子只剩备注能改）。
+  const [preOrderEditId, setPreOrderEditId] = useState<string | null>(null)
+  // 收货弹窗：默认按约定的只数收，每只收购价留空（空着按 0 算，见 `confirmReceivePreOrder`）。
+  const [receivingId, setReceivingId] = useState<string | null>(null)
+  const [receiveCount, setReceiveCount] = useState('')
+  const [receivePrice, setReceivePrice] = useState('')
+  // 收完货给一句回执「已收货，批次：X」。批次名是收货那一刻现起的（带时刻），
+  // 与其回头再去 `data.batches` 里按 id 查一次，不如当时就记住这个名字。
+  const [receiveDone, setReceiveDone] = useState<string | null>(null)
+  const [cancelingId, setCancelingId] = useState<string | null>(null)
+  const [cancelReason, setCancelReason] = useState('')
+  const [deletingId, setDeletingId] = useState<string | null>(null)
+
   // 解析不了（不是空、但不是数字）时必须给中文提示并且不写账，不能静默当 0：
   // 用户把「600元」打成「６00」而系统按 0 记账，那一批的成本从此就是错的，且没人会发现。
   const priceParsed = parseMoney(priceInput)
@@ -74,6 +134,28 @@ export function DogsPage() {
   // 只含空白 = 空名字，不写库。红字由草稿推导、不用额外的错误状态：
   // 只要用户还停在编辑态、框里是空的，这句话就一直在（和 SettingsPanel 的 inputError 一致）。
   const batchNameBlank = batchNameDraft !== null && batchNameDraft.trim() === ''
+
+  // ── 预定单区的派生值 ──────────────────────────────────────────────────────
+  // 顺序、分组全由 `preOrderList` 定（该去收的在最前面），界面只管照着画，
+  // 不自己排序 —— 排序规则两处各写一份，迟早对不上。拿到的 `order` 是
+  // `data.preOrders` 里的**原对象**，只读、不就地改。
+  const preOrderRows = preOrderList(data, today)
+  const preOrderDueCount = duePreOrderCount(data, today)
+  const preOrderEditing = preOrderEditId === null
+    ? null
+    : (data.preOrders.find(o => o.id === preOrderEditId) ?? null)
+  // 已收货的单子域层只认 note 一个字段（`updatePreOrder` 的白名单），
+  // 表单于是也只画一个备注框，别的框画出来就是骗人的。
+  const preOrderNoteOnly = preOrderEditing !== null && preOrderEditing.status === 'received'
+  const preOrderIssue = preOrderDraft === null || preOrderNoteOnly ? null : draftIssue(preOrderDraft)
+  const preOrderSavable = preOrderDraft !== null && (preOrderNoteOnly || canSubmitPreOrder(preOrderDraft))
+  // 实收只数走和「存活数」同一个口径（`parseAliveInput`）：只认整只、至少 1 只。
+  // `receivePreOrder` 遇到不合法是**原样返回**，界面不先拦住就是点了确认毫无反应。
+  const receiveCountParsed = parseAliveInput(receiveCount)
+  const receiveCountInvalid = receiveCount.trim() !== ''
+    && (receiveCountParsed === null || receiveCountParsed < 1)
+  const receivePriceParsed = parseMoney(receivePrice)
+  const receivePriceInvalid = receivePrice.trim() !== '' && receivePriceParsed === null
 
   /**
    * 记退款支出。设计文档 §3.4 与 §6 要求 `returned` 必须伴随一笔
@@ -91,6 +173,119 @@ export function DogsPage() {
       paidBy: 'pool', date: todayIso(), note: refundNote.trim() || (keepSold ? '钱退了，狗没回来' : '客户退狗'),
     }))
     setRefundingDogId(null)
+  }
+
+  // ── 预定单区的处理器 ──────────────────────────────────────────────────────
+
+  /**
+   * 收起预定单区的表单和三个弹窗，连草稿一起丢掉。
+   * 打开任何一处之前都先调它：界面上一时刻只能有一份没提交的输入，
+   * 换卡片、换批次视图时也不会把上一张单子没提交的内容带过去（见 `preOrderDraft` 处的说明）。
+   */
+  function closePreOrderPanels(): void {
+    setPreOrderDraft(null)
+    setPreOrderEditId(null)
+    setReceivingId(null)
+    setReceiveCount('')
+    setReceivePrice('')
+    setReceiveDone(null)
+    setCancelingId(null)
+    setCancelReason('')
+    setDeletingId(null)
+  }
+
+  function patchPreOrderDraft(patch: Partial<PreOrderDraft>): void {
+    setPreOrderDraft(d => (d === null ? d : { ...d, ...patch }))
+  }
+
+  function openNewPreOrder(): void {
+    closePreOrderPanels()
+    setPreOrderDraft(emptyPreOrderDraft())
+  }
+
+  /** 改一张：草稿**每次从这张单子现摊一份**，不复用上一次的。 */
+  function openEditPreOrder(order: PreOrder): void {
+    closePreOrderPanels()
+    setPreOrderEditId(order.id)
+    setPreOrderDraft(draftFromOrder(order))
+  }
+
+  function openReceivePreOrder(order: PreOrder): void {
+    closePreOrderPanels()
+    setReceivingId(order.id)
+    // 默认「按约定的只数收」：多数时候就是这个数，改成少数比从空框开始快。
+    // 每只收购价不给默认值 —— 替用户猜一个价，猜错了就是成本记错，空着按 0 算更清楚。
+    setReceiveCount(String(order.expectedCount))
+  }
+
+  function openCancelPreOrder(preOrderId: string): void {
+    closePreOrderPanels()
+    setCancelingId(preOrderId)
+  }
+
+  function openDeletePreOrder(preOrderId: string): void {
+    closePreOrderPanels()
+    setDeletingId(preOrderId)
+  }
+
+  /** 记一张 / 改一张。已收货的单子只剩备注能改（域层白名单也是这么认的）。 */
+  function submitPreOrder(): void {
+    const draft = preOrderDraft
+    if (draft === null) return
+    const editing = preOrderEditing
+    if (editing !== null && editing.status === 'received') {
+      void update(d => updatePreOrder(d, editing.id, { note: draft.note }))
+      closePreOrderPanels()
+      return
+    }
+    if (editing === null) {
+      // `createdAt` 是 ISO datetime 而不是 `YYYY-MM-DD`：同一天记的几张单子要能排出先后。
+      // 取「现在」只能在事件处理器里做，所以这里现取一次再传进去。
+      const input = preOrderInput(draft, new Date().toISOString())
+      if (input === null) return
+      void update(d => addPreOrder(d, input))
+    } else {
+      const patch = preOrderPatch(draft)
+      if (patch === null) return
+      void update(d => updatePreOrder(d, editing.id, patch))
+    }
+    closePreOrderPanels()
+  }
+
+  /**
+   * 收货：只认整只、至少 1 只。按钮那边已经禁用了，这里再判一次是因为
+   * `receivePreOrder` 的守卫是「原样返回同一引用」——真进去了它也不报错，
+   * 只是什么都没发生，那种「点了没反应」比一句红字难查得多。
+   */
+  function confirmReceivePreOrder(): void {
+    const preOrderId = receivingId
+    if (preOrderId === null) return
+    if (receiveCountParsed === null || receiveCountParsed < 1 || receivePriceInvalid) return
+    const count = receiveCountParsed
+    // 「现在」在事件处理器里现取：批次名里的时刻、记账的日子都是点下去那一刻的，
+    // 不能用渲染时那个 `today`（页面开着过夜，跨零点就错了）。
+    const name = `收狗 ${count} 只 ${localTimeHm(new Date())}`
+    void update(d => receivePreOrder(d, preOrderId, {
+      name, date: todayIso(), receivedCount: count, unitPriceFen: receivePriceParsed ?? 0,
+    }))
+    closePreOrderPanels()
+    // 必须排在 `closePreOrderPanels()` 后面：它会把回执一起清掉（两者都是入队的状态更新，
+    // 后写的赢），顺序反了这句回执就永远看不见。
+    setReceiveDone(name)
+  }
+
+  function confirmCancelPreOrder(): void {
+    const preOrderId = cancelingId
+    if (preOrderId === null) return
+    void update(d => cancelPreOrder(d, preOrderId, cancelReason.trim()))
+    closePreOrderPanels()
+  }
+
+  function confirmDeletePreOrder(): void {
+    const preOrderId = deletingId
+    if (preOrderId === null) return
+    void update(d => deletePreOrder(d, preOrderId))
+    closePreOrderPanels()
   }
 
   if (!openBatchId) {
@@ -122,6 +317,225 @@ export function DogsPage() {
           </button>
         </div>
 
+        {/* ── 预定单区（设计 §3.9）：放在批次列表之前 ──
+            还没拉回来的狗不属于任何一批，所以它排在批次上面：
+            出门要干什么先看见，然后才是账上已经有的事。 */}
+        <div className="mt-6">
+          {preOrderRows.length === 0 && preOrderDraft === null ? (
+            // 一张预定单都没有：不留空标题、不留空列表（与「报」页空态一个处理）。
+            // 但这个按钮必须在 —— 全仓只有它能建第一张预定单，连它一起藏掉，
+            // 这功能就永远进不去了（详见交付报告第 7 节）。
+            <button
+              type="button"
+              className="w-full rounded-xl border border-dashed border-gray-300 py-3 text-sm text-gray-500"
+              onClick={openNewPreOrder}
+            >
+              + 记一张预定单
+            </button>
+          ) : (
+            <>
+              <div className="flex items-center justify-between">
+                <h2 className="text-base font-bold">预定单</h2>
+                <button
+                  type="button"
+                  className="rounded-lg bg-gray-900 px-3 py-1.5 text-xs font-semibold text-white"
+                  onClick={openNewPreOrder}
+                >
+                  + 记一张
+                </button>
+              </div>
+
+              {preOrderDueCount > 0 && (
+                <p className="mt-1 text-sm font-semibold text-red-500">
+                  有 {preOrderDueCount} 张该去收了
+                </p>
+              )}
+
+              {receiveDone !== null && (
+                <p className="mt-1 text-sm text-emerald-600">已收货，批次：{receiveDone}</p>
+              )}
+
+              {preOrderDraft !== null && (
+                <div className="mt-2 rounded-xl bg-white p-3 shadow-sm">
+                  <p className="text-sm font-semibold">
+                    {preOrderNoteOnly ? '改备注' : preOrderEditing === null ? '记一张预定单' : '改这张预定单'}
+                  </p>
+                  <div className="mt-2 space-y-2">
+                    {preOrderNoteOnly ? (
+                      <input
+                        className={PRE_ORDER_FORM_INPUT}
+                        placeholder="备注（可留空）"
+                        value={preOrderDraft.note}
+                        onChange={e => patchPreOrderDraft({ note: e.target.value })}
+                      />
+                    ) : (
+                      <>
+                        <input
+                          className={PRE_ORDER_FORM_INPUT}
+                          placeholder="卖家（谁家的狗）"
+                          value={preOrderDraft.sellerName}
+                          onChange={e => patchPreOrderDraft({ sellerName: e.target.value })}
+                        />
+                        <input
+                          className={PRE_ORDER_FORM_INPUT}
+                          placeholder="联系方式（电话 / 微信，可留空）"
+                          value={preOrderDraft.sellerContact}
+                          onChange={e => patchPreOrderDraft({ sellerContact: e.target.value })}
+                        />
+                        <input
+                          className={PRE_ORDER_FORM_INPUT}
+                          inputMode="numeric"
+                          placeholder="约几只"
+                          value={preOrderDraft.expectedCount}
+                          onChange={e => patchPreOrderDraft({ expectedCount: e.target.value })}
+                        />
+                        <input
+                          className={PRE_ORDER_FORM_INPUT}
+                          type="date"
+                          value={preOrderDraft.collectDate}
+                          onChange={e => patchPreOrderDraft({ collectDate: e.target.value })}
+                        />
+                        <input
+                          className={PRE_ORDER_FORM_INPUT}
+                          placeholder="特征（几个黄的、大概多大，可留空）"
+                          value={preOrderDraft.traits}
+                          onChange={e => patchPreOrderDraft({ traits: e.target.value })}
+                        />
+                        <input
+                          className={PRE_ORDER_FORM_INPUT}
+                          placeholder="备注（可留空）"
+                          value={preOrderDraft.note}
+                          onChange={e => patchPreOrderDraft({ note: e.target.value })}
+                        />
+                      </>
+                    )}
+                  </div>
+                  {preOrderIssue !== null && (
+                    <p className="mt-1 text-xs text-red-500">{preOrderIssue}</p>
+                  )}
+                  <div className="mt-3 flex gap-2">
+                    <button
+                      type="button"
+                      className="flex-1 rounded-xl bg-gray-100 py-2.5 text-sm font-semibold text-gray-700"
+                      onClick={closePreOrderPanels}
+                    >
+                      取消
+                    </button>
+                    <button
+                      type="button"
+                      className="flex-1 rounded-xl bg-gray-900 py-2.5 text-sm font-semibold text-white disabled:opacity-40"
+                      disabled={!preOrderSavable}
+                      onClick={submitPreOrder}
+                    >
+                      保存
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              <ul className="mt-3 space-y-2">
+                {preOrderRows.map(({ order, stage }) => {
+                  // 批次名现查：`receivedBatchId` 是 `string | null`，查不到就只显示「已收货」
+                  // 不给链接（批次万一被删过，点进去会是一页空；也不写 `!`）。
+                  const batch = order.receivedBatchId === null
+                    ? null
+                    : (data.batches.find(b => b.id === order.receivedBatchId) ?? null)
+                  return (
+                    <li key={order.id} className="rounded-xl bg-white p-3 shadow-sm">
+                      <div className="flex items-baseline justify-between gap-2">
+                        <span className="font-semibold">{order.sellerName}</span>
+                        <span className={`shrink-0 text-xs font-semibold ${PRE_ORDER_STAGE_CLASS[stage]}`}>
+                          {PRE_ORDER_STAGE_LABEL[stage]}
+                        </span>
+                      </div>
+                      <div className="mt-1 text-xs text-gray-500">
+                        约 {order.expectedCount} 只 · {order.collectDate} 去收
+                        {order.sellerContact !== '' && ` · 联系 ${order.sellerContact}`}
+                      </div>
+                      {order.traits !== '' && (
+                        <div className="mt-1 text-xs text-gray-500">特征：{order.traits}</div>
+                      )}
+                      {order.note !== '' && (
+                        <div className="mt-1 text-xs text-gray-500">备注：{order.note}</div>
+                      )}
+                      {order.status === 'cancelled' && order.cancelReason !== '' && (
+                        <div className="mt-1 text-xs text-gray-500">原因：{order.cancelReason}</div>
+                      )}
+
+                      {order.status === 'reserved' && (
+                        <div className="mt-2 flex gap-2">
+                          <button
+                            type="button"
+                            // 过了日子的那张，「收货」用绿色主色顶出来：今天最该点的就是它。
+                            className={`flex-1 rounded-lg py-2 text-xs font-semibold text-white ${
+                              stage === 'overdue' ? 'bg-emerald-600' : 'bg-gray-900'
+                            }`}
+                            onClick={() => openReceivePreOrder(order)}
+                          >
+                            收货
+                          </button>
+                          <button
+                            type="button"
+                            className="rounded-lg bg-gray-100 px-3 py-2 text-xs font-semibold text-gray-700"
+                            onClick={() => openEditPreOrder(order)}
+                          >
+                            改
+                          </button>
+                          <button
+                            type="button"
+                            className="rounded-lg bg-gray-100 px-3 py-2 text-xs font-semibold text-gray-700"
+                            onClick={() => openCancelPreOrder(order.id)}
+                          >
+                            黄了
+                          </button>
+                        </div>
+                      )}
+
+                      {order.status === 'received' && (
+                        <div className="mt-2 flex flex-wrap items-center gap-2">
+                          <span className="text-sm font-semibold text-emerald-600">已收货</span>
+                          {batch !== null && (
+                            <button
+                              type="button"
+                              className="rounded-lg bg-gray-100 px-2 py-1 text-xs font-semibold text-gray-700"
+                              onClick={() => {
+                                closePreOrderPanels()
+                                setOpenBatchId(batch.id)
+                                setBatchNameDraft(null)
+                              }}
+                            >
+                              批次：{batch.name}
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            className="rounded-lg bg-gray-100 px-2 py-1 text-xs font-semibold text-gray-700"
+                            onClick={() => openEditPreOrder(order)}
+                          >
+                            改备注
+                          </button>
+                        </div>
+                      )}
+
+                      {order.status === 'cancelled' && (
+                        <div className="mt-2 flex justify-end">
+                          <button
+                            type="button"
+                            className="rounded-lg bg-gray-100 px-3 py-1.5 text-xs font-semibold text-red-500"
+                            onClick={() => openDeletePreOrder(order.id)}
+                          >
+                            删掉
+                          </button>
+                        </div>
+                      )}
+                    </li>
+                  )
+                })}
+              </ul>
+            </>
+          )}
+        </div>
+
         <ul className="mt-4 space-y-2">
           {data.batches.map(b => {
             const s = batchSummary(data, b.id)
@@ -135,6 +549,9 @@ export function DogsPage() {
                     // （见上面 batchNameDraft 处的说明）。
                     setOpenBatchId(b.id)
                     setBatchNameDraft(null)
+                    // 预定单区的草稿同理：它长在列表视图里，进详情后看不见，
+                    // 但状态还在身上；回到列表会突然弹出一张半填的单子（见 closePreOrderPanels）。
+                    closePreOrderPanels()
                   }}
                   className="w-full rounded-xl bg-white p-3 text-left shadow-sm"
                 >
@@ -158,6 +575,79 @@ export function DogsPage() {
             </li>
           )}
         </ul>
+
+        <Modal open={receivingId !== null} title="收货" onClose={closePreOrderPanels}>
+          <input
+            autoFocus
+            className="w-full rounded-lg bg-gray-100 px-3 py-2 text-lg outline-none"
+            inputMode="numeric"
+            placeholder="实收只数"
+            value={receiveCount}
+            onChange={e => setReceiveCount(e.target.value)}
+          />
+          {receiveCountInvalid && (
+            <p className="mt-1 text-xs text-red-500">只数得是整数，而且至少 1 只（狗只有整只）</p>
+          )}
+          <input
+            className="mt-2 w-full rounded-lg bg-gray-100 px-3 py-2 text-sm outline-none"
+            inputMode="decimal"
+            placeholder="每只收购价（元，空着按 0 算）"
+            value={receivePrice}
+            onChange={e => setReceivePrice(e.target.value)}
+          />
+          {receivePriceInvalid && (
+            <p className="mt-1 text-xs text-red-500">这不像一个数字，请重新填（只填元的数，如 800）</p>
+          )}
+          <p className="mt-2 text-xs text-gray-500">
+            确认后会建一个批次把这几只放进去，批次名自动带上收货的时刻。
+          </p>
+          <button
+            type="button"
+            className="mt-3 w-full rounded-xl bg-emerald-600 py-3 text-sm font-semibold text-white disabled:opacity-40"
+            disabled={receiveCountParsed === null || receiveCountParsed < 1 || receivePriceInvalid}
+            onClick={confirmReceivePreOrder}
+          >
+            确认收货
+          </button>
+        </Modal>
+
+        <Modal open={cancelingId !== null} title="这张预定单黄了？" onClose={closePreOrderPanels}>
+          <input
+            autoFocus
+            className="w-full rounded-lg bg-gray-100 px-3 py-2 text-sm outline-none"
+            placeholder="不写原因也行，以后自己看得懂就行"
+            value={cancelReason}
+            onChange={e => setCancelReason(e.target.value)}
+          />
+          <p className="mt-2 text-xs text-gray-500">
+            黄了就是这单不做了。单子会留在列表最底下，不占任何一批的账。
+          </p>
+          <div className="mt-3 flex gap-2">
+            <button
+              type="button"
+              className="flex-1 rounded-xl bg-gray-100 py-3 text-sm font-semibold text-gray-700"
+              onClick={closePreOrderPanels}
+            >
+              先不黄
+            </button>
+            <button
+              type="button"
+              className="flex-1 rounded-xl bg-gray-900 py-3 text-sm font-semibold text-white"
+              onClick={confirmCancelPreOrder}
+            >
+              黄了
+            </button>
+          </div>
+        </Modal>
+
+        <ConfirmDialog
+          open={deletingId !== null}
+          title="删掉这张预定单？"
+          message="删了就没有撤销，这张单子以后也查不回来。预定单删掉不影响任何批次 —— 它是黄了的单子，没收到货，没跟任何一批挂上钩。"
+          confirmLabel="删掉"
+          onConfirm={confirmDeletePreOrder}
+          onClose={closePreOrderPanels}
+        />
       </div>
     )
   }
