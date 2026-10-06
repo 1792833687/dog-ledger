@@ -81,9 +81,26 @@ describe('preOrderStage', () => {
   it('年月日位数对但日期不存在（2 月 30 日）—— 不抛错', () => {
     // 形状校验挡不住 2026-02-30 这种串，但 Date.UTC 会把它滚到 3 月 2 日而**不抛**，
     // 所以这里只要求「有个阶段、不炸」，不给它定死是哪一态。
+    // 不做闰年 / 按月天数校验是**刻意**的：真实录入走 <input type="date">，浏览器保证
+    // 是合法日历日；手改数据里的 '2026-02-30' 最坏只是「日子挪了几天」，不值得为它写
+    // 十几行日历逻辑。这条用例就是这条裁定的说明书，别顺手把校验补上。
     expect(['upcoming', 'due_soon', 'overdue']).toContain(
       preOrderStage(order({ collectDate: '2026-02-30' }), '2026-10-10', 3),
     )
+  })
+
+  it('leadDays = -1 —— 当天还是 due_soon，不是 overdue', () => {
+    // 「提前几天提醒」是提前量，-1 没有意义，一律当 0（只有当天算 due_soon）。
+    expect(preOrderStage(order({ collectDate: '2026-10-10' }), '2026-10-10', -1)).toBe('due_soon')
+    expect(preOrderStage(order({ collectDate: '2026-10-10' }), '2026-10-11', -1)).toBe('overdue')
+    expect(preOrderStage(order({ collectDate: '2026-10-10' }), '2026-10-09', -1)).toBe('upcoming')
+  })
+
+  it('leadDays = NaN —— 当天 due_soon，且不抛错', () => {
+    // 坏设置同样不能让界面白屏：不能写 Math.max(0, NaN)（结果还是 NaN，addDays 会抛）。
+    expect(preOrderStage(order({ collectDate: '2026-10-10' }), '2026-10-10', Number.NaN)).toBe('due_soon')
+    expect(preOrderStage(order({ collectDate: '2026-10-10' }), '2026-10-11', Number.NaN)).toBe('overdue')
+    expect(preOrderStage(order({ collectDate: '2026-10-10' }), '2026-10-09', Number.NaN)).toBe('upcoming')
   })
 })
 

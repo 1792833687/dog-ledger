@@ -32,14 +32,23 @@ const DATE_SHAPE = /^\d{4}-\d{2}-\d{2}$/
  *   `toISOString()` 直接炸），而这张单子可能是手改过的坏数据，界面不能因此白屏。
  * - 已取消 / 已收货**优先于任何日期判定**：一张 2020 年就取消掉的单子不该永远挂在
  *   「该去收了」里。
+ *
+ * 上面这串顺序是**在合法 `leadDays` 下**说的：提前量不是正数时先夹成 0（见下面那句），
+ * 于是「`leadDays <= 0` 时只有当天算 `due_soon`」成立，判定顺序对这种输入不会走到
+ * `overdue` 那一格上。
  */
 export function preOrderStage(order: PreOrder, today: string, leadDays: number): PreOrderStage {
   if (order.status === 'cancelled') return 'cancelled'
   if (order.status === 'received') return 'received'
+  // 「提前几天提醒」是提前量：负数与 NaN 都没有意义，一律当 0（只有当天算 due_soon）。
+  // 不能写 `Math.max(0, leadDays)` —— `Math.max(0, NaN)` 还是 NaN，然后
+  // `addDays(collectDate, -NaN)` 会抛 `RangeError: Invalid time value`，等于把抛错入口
+  // 从「日期坏」挪到了「设置坏」。坏设置同样不能让界面白屏。
+  const lead = Number.isFinite(leadDays) && leadDays > 0 ? leadDays : 0
   // 坏数据的兜底必须在 addDays 之前：形状不对就当「还没到日子」。
   if (!DATE_SHAPE.test(order.collectDate)) return 'upcoming'
   if (today > order.collectDate) return 'overdue'
-  if (today >= addDays(order.collectDate, -leadDays)) return 'due_soon'
+  if (today >= addDays(order.collectDate, -lead)) return 'due_soon'
   return 'upcoming'
 }
 
@@ -69,6 +78,11 @@ function groupOf(stage: PreOrderStage): number {
 /**
  * 清单的排序：先该去收的（按去收的日子升序），再还没到日子的（同样升序），
  * 最后已收货 / 已取消（按**建单时间降序**，最近处理的在最上面）。
+ *
+ * 「该去收了」那一组**只按 `collectDate` 升序，不再按 overdue / due_soon 分先后**：
+ * 同一张单子不可能在同一天既是 overdue 又是 due_soon（`today > collectDate` 与
+ * `today === collectDate` 互斥），所以合组之后组内不存在状态优先级，任务书 4734 的
+ * 括注说的也正是这个。用状态序当复合 key 只会多一层没有意义的判断。
  *
  * 同一天（或同一时刻）的用 `id` 兜底比较：不同设备上 `Array.prototype.sort` 的稳定性
  * 虽然已经写进规范，但让顺序**取决于输入数组的顺序**仍然不是好事 —— 同一份数据两次
