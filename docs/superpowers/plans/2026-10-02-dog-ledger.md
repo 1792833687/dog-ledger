@@ -5135,7 +5135,7 @@ export function setBatchChannel(data: AppData, batchId: string, channel: Channel
   export interface BatchCostDraft { transport: string; medicalPerDog: string; quarantinePerDog: string; disposalPerDog: string }
   export function draftToAmounts(draft: BatchCostDraft): { transportFen: Money; medicalPerDogFen: Money; quarantinePerDogFen: Money; disposalPerDogFen: Money }
   export function batchCostDraftIssue(draft: BatchCostDraft): string | null
-  export function previewText(count: number, totalFen: Money): string   // 「将新增 19 笔，合计 ¥1,234.00」
+  export function previewText(count: number, totalFen: Money): string   // 「将新增 19 笔 · ¥1,234」——**用 formatMoney 拼**，它是整数分就省掉小数点（`formatMoney(123400) === '¥1,234'`，不是 `¥1,234.00`）
   ```
 
 **必须满足的行为**
@@ -5143,7 +5143,9 @@ export function setBatchChannel(data: AppData, batchId: string, channel: Channel
 - 四行输入（标签逐字）：**运输 + 笼具（整批一笔）**、**每只疫苗 / 驱虫 / 医疗**、**每只检疫（抗体检测 + 申报）**、**每只病死犬处理费**（后三个是"每只单价"，标签里必须写出"每只"，否则用户会当成总额）。
 - 区块里常显一行：「**这一批已记成本 ¥X · 共 N 笔（含收购款）**」，其中 ¥X = `batchTotalCost(data, batchId)`、N = 该批 `expense` 流水的条数（**两者都含收购款**，设计 §3.10 已写死口径）。
 - `batchCostsIncomplete(data, batchId)` 为 `true` 时，区块标题旁挂一行橙字：「**这一批还没补成本，保本价现在是偏低的**」（这是设计里那句话，逐字用）。
-- 提交按钮文案带笔数与金额：用 `previewBatchCosts` 实时算（"将新增 19 笔 · ¥1,234.00"）；**点之前弹一次确认**（`window.confirm`，文案含笔数与金额），确认后才调 `addBatchCosts`。四行全 0 或全部非法 → 按钮禁用。
+- 提交按钮文案带笔数与金额：用 `previewBatchCosts` 实时算（"将新增 19 笔 · ¥1,234.00"）；**点之前弹一次确认**（用 Task 27 建的 `src/ui/components/ConfirmDialog.tsx`，**不许用 `window.confirm`**，文案含笔数与金额，并写明「只新增、不删改已有流水」），确认后才调 `addBatchCosts`。四行全 0 或全部非法 → 按钮禁用。
+- 补完账之后橙字必须消失（`batchCostsIncomplete` 的判定式就是"该批有没有一条 `category !== 'purchase'` 的支出"，流水一追加它就变 `false`——不需要任何缓存失效动作，但**要有一条走查/断言盯住它真的消失**）。
+- 区块里常显的「已记成本 ¥X · 共 N 笔（含收购款）」在补账后必须立刻变大（派生值现算）。
 - 金额输入一律走 `parseMoney`；非法 → 行内红字 + 按钮禁用；**空 = 0**（"不补这一项"与"这项是 0"在账上等价——因为填 0 本来就不写流水）。
 - 详情**头部**渲染 `batch.source`（卖家）与 `batch.note`（留痕）：`source` 非空时显示「卖家：老李家」，`note` 非空时显示在下面一行小字（此前 `Batch.note` 全仓没有任何渲染点，这次必须渲染出来，否则「来自预定单」「比约定的少 2 只」这些留痕用户根本看不到）。
 - 补账**绝不删改**任何既有流水（Task 25 已保证，界面也不许自己"先清后写"）。
@@ -5151,13 +5153,13 @@ export function setBatchChannel(data: AppData, batchId: string, channel: Channel
 **测试要求**（`batchCostsForm.test.ts`）
 - `draftToAmounts`：四个空串 → 四个 0；`'1,200'` → `120000`（`parseMoney` 的口径）；非法 → 由 `batchCostDraftIssue` 给红字。
 - `batchCostDraftIssue`：`'abc'` → 红字；全空 → `null`（合法，只是不补）；负数 → 红字。
-- `previewText(19, 123400)` → 逐字断言（含中文顿号与 `¥` 写法，与既有 `formatMoney` 输出一致——**用 `formatMoney` 拼，不要自己写货币格式**）。
+- `previewText(19, 123400)` → 逐字断言 `'将新增 19 笔 · ¥1,234'`（`formatMoney(123400)` 就是 `'¥1,234'`，整数分不带小数点；**用 `formatMoney` 拼，不要自己写货币格式**，也不要为了凑 `¥1,234.00` 去改 `formatMoney`）。
 - 四行全 0 时"能不能提交"的判定与 `previewBatchCosts().count === 0` 一致。
 
 **Steps**
 - [ ] **Step 1**：写 `batchCostsForm.test.ts` 与实现。
 - [ ] **Step 2**：改 `src/ui/pages/DogsPage.tsx` 详情视图（补成本区块 + 头部渲染卖家与留痕）。
-- [ ] **Step 3**：`npx vitest run` / `npm run build` / `npm run lint`；手动在 `npm run dev` 里点一遍（不要求真机）。
+- [ ] **Step 3**：`npx vitest run` / `npm run build` / `npm run lint`。**不要求浏览器走查**（控制器用 CDP 探针验）。模块数应从 53 变成 54（`batchCostsForm.ts` 是新进 bundle 的文件）。
 - [ ] **Step 4**：提交：
   ```bash
   git add src/ui/batchCostsForm.ts src/ui/batchCostsForm.test.ts src/ui/pages/DogsPage.tsx
@@ -5176,7 +5178,7 @@ export function setBatchChannel(data: AppData, batchId: string, channel: Channel
 - Modify: `src/ui/pages/MoneyPage.tsx`
 
 **Interfaces:**
-- Consumes: `updateEntry` / `deleteEntry`（Task 26）、`entryLabel` / `catLabel` / `partnerName` / `canSubmit`（`src/ui/moneyBook.ts`）、`parseMoney`、`amountInvalid`（`src/ui/moneyBook.ts`）、`useAppData`
+- Consumes: `updateEntry` / `deleteEntry`（Task 26）、`entryLabel` / `catLabel` / `partnerName` / `canSubmit`（`src/ui/moneyBook.ts`）、`parseMoney`、`amountInvalid`（`src/ui/moneyBook.ts`）、`useAppData`、**`src/ui/components/ConfirmDialog.tsx`（Task 27 建的，删除确认就用它，不许用 `window.confirm`）**、`formatMoney`
 - Produces: `src/ui/entryForm.ts` 里的纯函数：
   ```ts
   export interface EntryDraft { amount: string; date: string; note: string; paidBy: 'pool' | string; category: string }
@@ -5197,7 +5199,9 @@ export function setBatchChannel(data: AppData, batchId: string, channel: Channel
   - 删的是退款流水（`category === 'aftercare_refund'`）→ 写明「删掉之后那只狗会重新出现『退款』按钮，别对同一只狗再退一次」。
   - 其余 → 一般性「这笔账会被永久删除，没有撤销」，并写明它挂在哪只狗 / 哪个批次。
 - 每行第二行显示挂靠：`entryScope` 用狗的 `code` 与批次名解析（`batchId` → `batches` 里的 `name`；`dogId` → `dogs` 里的 `code`）。**批次改名不追溯狗号**，所以狗号与批次名可能不一致——**这是预期的**，不要"修正"它，解析不到就显示 `—`。
-- 列表底部：`data.entries.length > 60` 时显示「**还有 N 笔更早的 · 显示全部**」按钮，点开渲染全部（倒序）；`N = data.entries.length - 60`。不做分页。
+- 列表底部：`data.entries.length > 60` 时显示「**还有 N 笔更早的 · 显示全部**」按钮，点开渲染全部（倒序）；`N = data.entries.length - 60`。不做分页。**那个 60 现在写死在 `src/ui/pages/MoneyPage.tsx:37` 附近**（`slice(-60)` 之类），把它提成一个本文件内的具名常量再复用，别让"60"在判断与渲染两处各写一遍。
+- 「改」「删」按钮**不许**把每行的金额挤掉：金额是这一行最重要的信息，小按钮放在第二行或行尾。
+- 删除**不撤销收货**（Task 26 的硬提醒②）：删掉一笔流水不会动 `preOrders`，弹窗文案里不要承诺做不到的事。
 
 **测试要求**（`entryForm.test.ts`）
 - `entryPatch` **只带真正改动的键**：金额从 `'50'` 改成 `'50'` → 空对象；`'50'` → `'60'` → `{ amount: 6000 }`；同时改日期与备注 → 两个键。
@@ -5209,7 +5213,7 @@ export function setBatchChannel(data: AppData, batchId: string, channel: Channel
 **Steps**
 - [ ] **Step 1**：写 `entryForm.test.ts` 与实现。
 - [ ] **Step 2**：改 `src/ui/pages/MoneyPage.tsx`（行内按钮、两个弹窗、显示全部）。
-- [ ] **Step 3**：`npx vitest run` / `npm run build` / `npm run lint`。
+- [ ] **Step 3**：`npx vitest run` / `npm run build` / `npm run lint`。**不要求浏览器走查**（控制器用 CDP 探针验）。模块数应从 54 变成 55（`entryForm.ts` 是新进 bundle 的文件）。
 - [ ] **Step 4**：提交：
   ```bash
   git add src/ui/entryForm.ts src/ui/entryForm.test.ts src/ui/pages/MoneyPage.tsx
