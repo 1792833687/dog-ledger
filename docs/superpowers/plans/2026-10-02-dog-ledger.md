@@ -4818,10 +4818,11 @@ export function setBatchChannel(data: AppData, batchId: string, channel: Channel
 
 **Files:**
 - Modify: `src/domain/planning.ts`（**删除** `createBatchFromPlan`，新增 `addBatchWithDogs` / `receiveBatch`；`plan` / `PlanInput` / 保本价 / 渠道相关的函数**一个字节都不动**）
-- Modify: `src/domain/planning.test.ts`（`describe('createBatchFromPlan')` 的 12 条整体改写成新函数的等价用例）
+- Modify: `src/domain/planning.test.ts`（`describe('createBatchFromPlan')` 的 **10 条**整体改写成新函数的等价用例 —— 原文写的「12 条」是控制器的数错了，实施时以实际代码为准）
 - Modify: `src/domain/actions.ts`（追加 `receivePreOrder`）
 - Modify: `src/domain/actions.test.ts`
 - Modify: `src/ui/pages/CalculatePage.tsx`（底部按钮改为「收货」，弹窗只问两个数）
+- Modify: `src/ui/planForm.ts`（仅 `:135` 那句注释里的 `createBatchFromPlan()` —— 函数删了，注释不能指向不存在的东西）
 
 **Interfaces:**
 - Consumes: `newId`、`Dog` / `Batch` 的必填字段（修订二那 6 个检疫字段与 `plannedChannel`）、`ChannelId`
@@ -4854,10 +4855,10 @@ export function setBatchChannel(data: AppData, batchId: string, channel: Channel
   4. 其余数据不动。
 - `receivePreOrder` 守卫：找不到 id、`status !== 'reserved'`、`receivedCount < 1` 任一成立 → **返回同一引用**。
 - **`domain/` 里不许出现无参 `new Date()`**：`name`（形如 `收狗 6 只 14:30`）与 `date` 都由界面算好传进来（`localTimeHm(new Date())` 在 `src/ui/planForm.ts:54-66`、`todayLocalIso(new Date())` 在 `:47`）。
-- `CalculatePage.tsx`：底部按钮文案从「就按这个收」改成「**收货**」；点了之后弹一个**只有两个字段**的弹窗——实收只数（默认表单里的 `n`）与每只收购价（默认表单里的值）——确认后调 `receiveBatch`（`name` 用 `收狗 N 只 HH:MM`，`N` 是**实收只数**，`date` 用 `todayIso()`，`channel: selectedChannel`）。`new Date()` 必须留在事件处理器里（Task 21 的 `handleCreateBatch` 已经这么做，`CalculatePage.tsx:112`）。成功文案里保留去向（Task 18b 加的那行）。**估算出来的运输 / 疫苗 / 检疫 / 处理费一个字都不要写进账**——它们只是保本价的输入。
+- `CalculatePage.tsx`：底部按钮文案从「就按这个收」改成「**收货**」；点了之后弹一个**只有两个字段**的弹窗——实收只数（默认表单里的 `n`）与每只收购价（默认表单里的值）——确认后调 `receiveBatch`（`name` 用 `收狗 N 只 HH:MM`，`N` 是**实收只数**，`date` 用 `todayLocalIso(new Date())`（`src/ui/planForm.ts:47`；任务书原文写的 `todayIso()` 这个函数名不存在），`channel: selectedChannel`）。`new Date()` 必须留在事件处理器里（Task 21 的 `handleCreateBatch` 已经这么做，`CalculatePage.tsx:112`）。成功文案里保留去向（Task 18b 加的那行）。**估算出来的运输 / 疫苗 / 检疫 / 处理费一个字都不要写进账**——它们只是保本价的输入。
 
 **测试要求**
-- `planning.test.ts`：把 `describe('createBatchFromPlan')` 的 12 条改写成 `addBatchWithDogs` / `receiveBatch` 的等价用例，其中**必须保留**这几条语义：只数 0 → 不建批次（`batchId === null`）、狗号逐字形如 `收狗 3 只 09:10-1`、每只狗一笔 purchase、单价 0 一笔都不写、6 个检疫字段都是空值、`plannedChannel` 落对。原来钉「17 笔」「8 笔 quarantine」「只数 0 只记运输」的那三条**改由 Task 25 的 `addBatchCosts` 测试承担**（笔数口径不变，只是搬到新函数上）。
+- `planning.test.ts`：把 `describe('createBatchFromPlan')` 的 **10 条**改写成 `addBatchWithDogs` / `receiveBatch` 的等价用例，其中**必须保留**这几条语义：只数 0 → 不建批次（`batchId === null`）、狗号逐字形如 `收狗 3 只 09:10-1`、每只狗一笔 purchase、单价 0 一笔都不写、6 个检疫字段都是空值、`plannedChannel` 落对。原来钉「17 笔」「8 笔 quarantine」「只数 0 只记运输」的那三条**由 Task 25 的 `addBatchCosts` 测试重新承担**（Task 24 实施时按"行为已变更"删除而非搬迁，笔数口径必须在 Task 25 重建）。
 - `actions.test.ts` 的 `receivePreOrder`：
   - 收货原子性：一次调用后 `batches.length +1`、`dogs.length + receivedCount`、该批 `purchase` 流水恰好 `receivedCount` 笔、预定单 `status === 'received'` 且 `receivedBatchId` 指向新批次、`receivedCount` 落对。
   - 留痕逐字：`expectedCount: 4 / receivedCount: 2` → `note === '来自预定单：老李家；比约定的少 2 只'`；相等时**不出现**「比约定」字样；多收时写「多」。
@@ -4873,6 +4874,22 @@ export function setBatchChannel(data: AppData, batchId: string, channel: Channel
   git add src/domain/planning.ts src/domain/planning.test.ts src/domain/actions.ts src/domain/actions.test.ts src/ui/pages/CalculatePage.tsx
   git commit -m "feat: 收货只记收购款（先做后补账，修订三 D14）"
   ```
+
+> **Task 24 实施记录（2026-10-06）—— 提交 `2109b84`**（6 files / +483 / −110）
+>
+> **门禁**：`Test Files 24 passed (24)` / `Tests 583 passed (583)`（基线 565，**+18**）、`tsc -b` 0 error + `✓ 52 modules transformed` / `✓ built in 241ms`（模块数不变符合预期：`planning.ts` 本就在 bundle 里）、`npx oxlint` `Found 0 warnings and 0 errors.`（66 files）、`git status --short` 空。控制器独立复跑门禁一致。
+>
+> **落点**：`src/domain/planning.ts` 删旧 `:72-134` 的 `createBatchFromPlan`，新增 `:81 addBatchWithDogs`、`:143 receiveBatch`（`plan`/`PlanInput`/`PlanResult` 一字未动）；`src/domain/actions.ts:452 receivePreOrder`（`:3` 新增 `import { addBatchWithDogs } from './planning'`，文件头纪律注释写明这是唯一例外及理由）；`src/ui/pages/CalculatePage.tsx` 按钮改「收货」+ 两字段弹窗（`openReceive` `:129`、`handleReceive` `:135`、校验 `:100-111`、弹窗 `:400-420`）；`src/ui/planForm.ts:135` 注释去掉 `createBatchFromPlan()`。
+>
+> **红态**：`Test Files 2 failed | 22 passed (24)` / `Tests 29 failed | 554 passed (583)`，全部 `TypeError: addBatchWithDogs is not a function`（`planning.test.ts:260:19`）、`TypeError: receiveBatch is not a function`（`:277:18`）、`TypeError: receivePreOrder is not a function`。
+>
+> **五处偏离（全部接受）**：①任务书写的「12 条」实为 **10 条**（本节原文已改）；②旧「只数 0 建空批次」是**行为变更**而非等价改写——新版只数 0/负数/NaN/Infinity 一律返回同一引用且 `batchId === null`，什么都不建；③三种成本流水的旧断言（17 笔 / 8 笔 quarantine / 运输为 0 不写）**删除而非搬迁**，由 Task 25 重建（本节测试要求已注明）；④`src/ui/planForm.ts` 是控制器追加的第 6 个文件；⑤成功文案「已建批次」→「已收货」，弹窗里另加一句灰色提示「只记收购款。运输、疫苗、检疫与病死犬处理费都还没付，等真付了钱去『狗』标签页补账。」（控制器认可：这正是「先做后补账」的中心，不做提示用户会以为漏记）。
+>
+> **控制器裁定（实施者第 6 节的 7 处判断，全部保留）**：①守卫用 `!Number.isFinite(count) || count < 1`（`Math.floor(NaN)` 是 NaN、`Math.floor(Infinity)` 是 Infinity，只判 `< 1` 挡不住），比任务书更严，采纳；②`receivedCount: 0.5` → `floor` 后 0 → 返回同一引用（"当没收到"，不建空批次）；③`receivePreOrder` 先取 `const batchId = created.batchId` 再判空（TS 对属性访问不保留收窄），属防御性返回且返回的是**原 data**；④`preOrders` 用 `map` 只换命中的那一条，未命中的返回原对象引用（有 `toBe(other)` 钉着）；⑤**先查后建**——找不到 id 或状态不对直接 return，绝不先建批次再丢弃，所以 `batchId === null` 那条分支实际不可达；⑥弹窗「每只收购价」空串/纯空格当 0（`parseMoney('')` 返回 `null`，必须先 trim 判空），负数按非法处理（`parseMoney('-1')` = −100 是合法数字但语义非法）；⑦只数走 `parseAliveInput`（`/^\d+$/`），`'2.5'`/`'-1'`/`'1e3'` 都是红字。
+>
+> **留给 Task 25 的现场风险（必须在 Task 25 的 UI 接线之前解决，否则界面会给出偏低的价格）**：`batchTotalCost`（`src/domain/costing.ts:15`）现在收到的是**不完整的成本**——收货只写了收购款。如果任何界面在补账之前用 `floorPriceFen`/`batchPerDogCostFen` 显示「低于这个价别卖」，那个数字会偏低。Task 25 的 `batchCostsIncomplete` 就是为这条准备的，Task 28 负责在界面上把橙字提示挂出来；**在那之前不许新增任何展示保本价的批次视图**。实机走查时也要按"先收货、不补账、看批次详情"的顺序确认橙字确实出现。
+>
+> **其他现场事实**：`git grep createBatchFromPlan -- src` 无命中；`handleCreateBatch` 在 `src/` 下已无引用（`docs/` 里的历史引用未碰）；预定单收货后 `plannedChannel` 恒为 `'undecided'`（任务书要求），真正的去向在批次详情里改；`planning.test.ts` 现在有 `floorPriceFen(data, batchId)` 助手（`batchSummary` 的 `floorPriceFen` 为 null 就 throw），它那两条 `¥600` 断言在 Task 25 加成本后需要复核。
 
 ---
 
