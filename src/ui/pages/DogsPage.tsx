@@ -1,6 +1,11 @@
 import { useState } from 'react'
 import { useAppData } from '../../state/useAppData'
-import { batchSummary, dogsOfBatch, dilutedCostFen, dogIncome, dogProfitFen } from '../../domain/costing'
+import {
+  batchSummary, batchTotalCost, dogsOfBatch, dilutedCostFen, dogIncome, dogProfitFen,
+} from '../../domain/costing'
+// 补账表：笔数与金额只由 `previewBatchCosts` 说了算，「还没补过成本」只由
+// `batchCostsIncomplete` 说了算 —— 界面里一处都不自己数、不自己求和（见 task 28 的中心要求）。
+import { addBatchCosts, batchCostsIncomplete, previewBatchCosts } from '../../domain/batchCosts'
 import {
   sellDog, markDogDead, setDogStatus, createBatch, addExpense, setBatchChannel, renameBatch,
   addPreOrder, updatePreOrder, cancelPreOrder, deletePreOrder, receivePreOrder,
@@ -12,6 +17,7 @@ import { duePreOrderCount, preOrderList } from '../../domain/preOrders'
 import type { PreOrderStage } from '../../domain/preOrders'
 import { Modal } from '../components/Modal'
 import { ConfirmDialog } from '../components/ConfirmDialog'
+import { Field } from '../components/Field'
 import { todayLocalIso, localTimeHm } from '../planForm'
 import { isOnHand, refundedCurrentSale } from '../dogLedger'
 import { channelOptions, findChannel, parseAliveInput } from '../channelView'
@@ -19,6 +25,10 @@ import {
   canSubmitPreOrder, draftFromOrder, draftIssue, emptyPreOrderDraft, preOrderInput, preOrderPatch, stageText,
 } from '../preOrderForm'
 import type { PreOrderDraft } from '../preOrderForm'
+import {
+  batchCostRowIssue, batchCostsInput, emptyBatchCostDraft, previewText,
+} from '../batchCostsForm'
+import type { BatchCostDraft } from '../batchCostsForm'
 
 /**
  * 「狗」页面 —— 批次台账。
@@ -92,6 +102,33 @@ export function DogsPage() {
   // 退回列表，再打开批次 B，B 一进详情就是空的编辑框，外加一句红字「批次名不能是空的」
   // —— 那是 A 留下的，用户会以为 B 的名字被弄坏了（库里其实一个字都没改）。
   const [batchNameDraft, setBatchNameDraft] = useState<string | null>(null)
+
+  // ── 补成本区（设计 §3.10）的状态 ────────────────────────────────────────────
+  // 四行金额的草稿。它和 `batchNameDraft` 是同一类东西：**只属于「当前打开的那一批」**。
+  // 打开下一批时框里还留着上一批的金额，用户照着点一下确认，那一批就被记上了别人的运费
+  // —— 所以离开批次时必须连它一起丢掉（见 `resetBatchDrafts`）。
+  const [costDraft, setCostDraft] = useState<BatchCostDraft>(emptyBatchCostDraft)
+  // 补账区默认折叠：收完狗回来的人先看的是这一批的盈亏与「剩下的每只至少卖多少」，
+  // 补账是过几天把钱付掉了才回来做的事，摊开占半屏会把上面那两块挤下去。
+  const [costOpen, setCostOpen] = useState(false)
+  // 确认弹窗。笔数与金额先给用户看一遍再落库：一按下去就多出十几笔流水，
+  // 这是全仓唯一一个「点一下同时写很多条账」的动作。
+  const [costConfirmOpen, setCostConfirmOpen] = useState(false)
+
+  /**
+   * 离开当前批次时把两份草稿都丢掉（批次名 + 补账金额），并收起补账区与它的确认弹窗。
+   *
+   * 为什么必须显式丢：提交空批次名会**故意**停在编辑态并出红字（见 `commitBatchName`），
+   * 那条路走不到清草稿的分支；补账草稿更是只要用户填了一半就一直在。不丢的话，
+   * 用户清空 A 的名字 / 填了 A 的运费、退回列表、再打开 B，B 一进详情就是 A 留下的内容
+   * —— 那不只是难看，是**会把 A 的钱记到 B 头上**（Task 21b 的批次名串台是同一类缺陷）。
+   */
+  const resetBatchDrafts = (): void => {
+    setBatchNameDraft(null)
+    setCostDraft(emptyBatchCostDraft())
+    setCostOpen(false)
+    setCostConfirmOpen(false)
+  }
 
   // ── 预定单区（设计 §3.9）的状态 ────────────────────────────────────────────
   // 界面要拿「今天」判断哪张单子该去收了，但 `new Date()` 是 impure 的，放在渲染体里
@@ -676,10 +713,10 @@ export function DogsPage() {
           type="button"
           className="mt-3 w-full rounded-xl bg-gray-100 py-3 text-sm font-semibold text-gray-700"
           onClick={() => {
-            // 退回列表同样要丢草稿（理由见上面 batchNameDraft 的说明），
+            // 退回列表同样要丢草稿（理由见上面 batchNameDraft 与 resetBatchDrafts 的说明），
             // 而且「清空名字 → 失焦留在编辑态 → 点这里」正是草稿最容易漏下来的走法。
             setOpenBatchId(null)
-            setBatchNameDraft(null)
+            resetBatchDrafts()
           }}
         >
           ← 回所有批次
@@ -690,6 +727,28 @@ export function DogsPage() {
 
   const summary = batchSummary(data, batch.id)
   const dogs = dogsOfBatch(data, batch.id)
+
+  // ── 补成本区（设计 §3.10）的派生值 ──────────────────────────────────────────
+  // 「还没补过成本」只由 `batchCostsIncomplete` 判（它的判据是「有没有一笔非收购款的支出」，
+  // 不能用「总成本是不是 0」代替 —— 那个数含收购款，刚收完货就已经大于 0 了）
+  const costIncomplete = batchCostsIncomplete(data, batch.id)
+  const costTotal = batchTotalCost(data, batch.id)
+  // 这一批已有几笔支出（**含收货那笔收购款**，与上面那个金额同一个口径）。
+  // 这里只数条数、不求和：求和的唯一实现是 `batchTotalCost`，界面里不许再写一遍。
+  const costEntryCount = data.entries.filter(e => e.type === 'expense' && e.batchId === batch.id).length
+  // 有红字时 `batchCostsInput` 返回 null，于是连预览都算不出来 ——
+  // 不可能出现「明明有红字、按钮还亮着」。
+  // 预览里的日期用本屏挂载时那个 `today`（渲染体里不许现取 `new Date()`）；
+  // 真正写库那一刻的日期在事件处理器里用 `todayIso()` 现取。
+  const costInput = batchCostsInput(batch.id, today, costDraft)
+  const costPreview = costInput === null ? null : previewBatchCosts(data, costInput)
+  // 「有没有东西要补」只有 `previewBatchCosts` 说了算：只填了处理费而这一批没有死狗时，
+  // 四行都合法却一笔也生不出来（那要数这一批有几只狗、几只死了，界面数不了也不该数）。
+  const costSavable = costPreview !== null && costPreview.count > 0
+  const costConfirmMessage = costPreview === null
+    ? '现在没有要新增的流水。'
+    : `这一次新增 ${costPreview.count} 笔支出，一共 ${formatMoney(costPreview.totalFen)}。`
+      + '只新增，不删改已有流水 —— 你手记的那些账一笔不动。'
 
   /**
    * 提交批次名。回车与失焦都走这里。
@@ -707,16 +766,41 @@ export function DogsPage() {
     setBatchNameDraft(null)
   }
 
+  /**
+   * 打开补账的确认弹窗。笔数与金额先给用户看一遍再落库：这是全仓唯一一个
+   * 按一下会同时写十几笔流水的动作，值得多问一句。
+   */
+  const openCostConfirm = (): void => {
+    // 按钮在 `costSavable` 为假时本来就是灰的，这里再挡一次：
+    // 将来多一个入口（回车提交之类）时闸门还在原处。
+    if (!costSavable) return
+    setCostConfirmOpen(true)
+  }
+
+  /** 真的补账。日期在**这一刻**现取：渲染体里的 `today` 是挂载时那一个，跨了零点就不准了。 */
+  const confirmAddBatchCosts = (): void => {
+    const input = batchCostsInput(batch.id, todayIso(), costDraft)
+    if (input === null) return
+    void update(d => addBatchCosts(d, input))
+    // 补完就把四行清空、区块收起。**不清空就可能记重**：同一版金额留在框里，
+    // 用户很容易再点一次确认，那一批的运输费就记了两遍。
+    // 「补成功了」的样子在折叠着也看得见 —— 上面那行「已记账成本」当场变大、橙字消失，
+    // 两个都是现算的派生值，不需要任何缓存失效动作。
+    setCostDraft(emptyBatchCostDraft())
+    setCostConfirmOpen(false)
+    setCostOpen(false)
+  }
+
   return (
     <div className="px-4 pb-6 pt-6">
       <button
         type="button"
         className="text-sm text-gray-500"
         onClick={() => {
-          // 和上面那个「回所有批次」一样：离开这个批次就把草稿丢掉，
-          // 别让它跟着进下一个批次（理由见上面 batchNameDraft 的说明）。
+          // 和上面那个「回所有批次」一样：离开这个批次就把草稿丢掉（连补账那四行金额一起），
+          // 别让它跟着进下一个批次（理由见上面 batchNameDraft 与 resetBatchDrafts 的说明）。
           setOpenBatchId(null)
-          setBatchNameDraft(null)
+          resetBatchDrafts()
         }}
       >
         ← 所有批次
@@ -763,6 +847,16 @@ export function DogsPage() {
           ))}
         </select>
       </div>
+
+      {/* 卖家与留痕。`Batch.source` / `Batch.note` 此前全仓没有任何渲染点：
+          从预定单收来的货，卖家名和「比约定的少 2 只」都写进库里了，用户却一个字看不到。
+          只含空白当作没写（渲染出来是一行空白反而像界面上多了个怪东西）。 */}
+      {batch.source.trim() !== '' && (
+        <p className="mt-1 text-xs text-gray-500">卖家：{batch.source.trim()}</p>
+      )}
+      {batch.note.trim() !== '' && (
+        <p className="mt-0.5 text-xs text-gray-400">{batch.note.trim()}</p>
+      )}
 
       <div className="mt-3 rounded-xl bg-white p-4 shadow-sm">
         <div className="grid grid-cols-2 gap-3 text-sm">
@@ -933,6 +1027,96 @@ export function DogsPage() {
       <p className="mt-2 text-xs text-gray-400">
         这里只记池子直接付掉的钱。合伙人先垫付的，去「钱」标签页记，那笔将来要从池子还给他。
       </p>
+
+      {/* ── 补成本（设计 §3.10）─────────────────────────────────────────────────
+          收货那一刻只记了收购款，运输 / 疫苗 / 检疫 / 处理费都是过几天真把钱付掉了才回来补的。
+          默认折叠，**但标题那一行连橙字一起常显**：折叠着要是连提醒也看不见，
+          「保本价现在偏低」这件事就没人知道了。折叠体例照「算」页的渠道对照。 */}
+      <section className="mt-4 rounded-xl bg-white p-4 shadow-sm">
+        <button
+          type="button"
+          className="flex w-full items-baseline justify-between gap-3 text-left"
+          onClick={() => setCostOpen(v => !v)}
+        >
+          <span className="text-sm font-semibold text-gray-700">补成本 {costOpen ? '▾' : '▸'}</span>
+          <span className="text-right text-xs text-gray-400">
+            {/* 常显行：金额与笔数都是派生值，补完账当场变大。两者都含收购款（设计 §3.10 的口径）。 */}
+            <span className="block font-semibold text-gray-600">
+              这一批已记成本 {formatMoney(costTotal)} · 共 {costEntryCount} 笔（含收购款）
+            </span>
+            <span className="mt-0.5 block">运输、笼具、疫苗、检疫、处理费，付掉了回来补一次。</span>
+          </span>
+        </button>
+
+        {costIncomplete && (
+          <p className="mt-2 text-xs font-semibold text-amber-600">
+            这一批还没补成本，保本价现在是偏低的
+          </p>
+        )}
+
+        {costOpen && (
+          <div className="mt-2 border-t border-gray-100">
+            {/* 后三行标签里都写清「每只」：写成总额的话用户会把整批的钱填进去，
+                每只摊薄成本当场少算好几倍，而且算出来的保本价看着还挺合理。 */}
+            <Field
+              label="运输 + 笼具（整批一笔）"
+              suffix="元"
+              value={costDraft.transport}
+              onChange={v => setCostDraft(d => ({ ...d, transport: v }))}
+              error={batchCostRowIssue(costDraft.transport) ?? undefined}
+            />
+            <Field
+              label="每只疫苗 / 驱虫 / 医疗"
+              suffix="元"
+              value={costDraft.medicalPerDog}
+              onChange={v => setCostDraft(d => ({ ...d, medicalPerDog: v }))}
+              error={batchCostRowIssue(costDraft.medicalPerDog) ?? undefined}
+            />
+            <Field
+              label="每只检疫（抗体检测 + 申报）"
+              suffix="元"
+              value={costDraft.quarantinePerDog}
+              onChange={v => setCostDraft(d => ({ ...d, quarantinePerDog: v }))}
+              error={batchCostRowIssue(costDraft.quarantinePerDog) ?? undefined}
+            />
+            <Field
+              label="每只病死犬处理费"
+              suffix="元"
+              value={costDraft.disposalPerDog}
+              onChange={v => setCostDraft(d => ({ ...d, disposalPerDog: v }))}
+              error={batchCostRowIssue(costDraft.disposalPerDog) ?? undefined}
+            />
+
+            <button
+              type="button"
+              className="mt-3 w-full rounded-xl bg-gray-900 py-3 text-sm font-semibold text-white disabled:opacity-40"
+              disabled={!costSavable}
+              onClick={openCostConfirm}
+            >
+              {/* 按钮上就写清楚这一次会加几笔、一共多少钱，不用点进去才知道。 */}
+              {costPreview === null
+                ? '先把红字那一行改对'
+                : previewText(costPreview.count, costPreview.totalFen)}
+            </button>
+            {/* 按钮为什么是灰的，得说出来：用户会以为界面坏了。
+                「只填了处理费但这一批没有死狗」也落在这一条上（那种情况确实没东西可补）。 */}
+            {costPreview !== null && costPreview.count === 0 && (
+              <p className="mt-2 text-xs text-gray-400">
+                填 0 的行不会记流水，所以现在没有要补的账。
+              </p>
+            )}
+          </div>
+        )}
+      </section>
+
+      <ConfirmDialog
+        open={costConfirmOpen}
+        title="补这几笔成本？"
+        message={costConfirmMessage}
+        confirmLabel="记上"
+        onConfirm={confirmAddBatchCosts}
+        onClose={() => setCostConfirmOpen(false)}
+      />
 
       <Modal
         open={sellingDogId !== null}
