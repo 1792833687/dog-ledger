@@ -4622,7 +4622,7 @@ export function setBatchChannel(data: AppData, batchId: string, channel: Channel
 
 > **这一组任务的由来。** 第一版（Task 1–21）已上线并在真机上用起来了。用户用了一段时间后提了三件事（原话）：「我们找到的狗还没有合适的年龄段就预定了……等长到两个月大我们会去收，**等于是有一批预定单**」「我希望是我们**先做后才生成账目表再记录**的」「还有些功能细节也帮我完善（＝**流水能改能删**）」。设计已按 `docs/superpowers/specs/2026-10-02-dog-trading-ledger-design.md` 的**修订三**（D13–D16、§3.9/§3.10/§3.11）写定，并经一轮只读审查改定（提交 `a2f830b` → `c169327`）。**任务书里凡是与代码冲突的断言，都以那轮审查的复核结论为准**——尤其：`refundedCurrentSale` **不改**、金额**不新立"必须 > 0"**、`createBatchFromPlan` **删除而不是保留**。
 >
-> **顺序（任务编号是身份，不是执行顺序）**：`22 → 23 → 23b → 24 → 25 → 26 → 27 → 27b → 28 → 29 → 30`（**23b** 与 **27b** 是控制器在复核 Task 23 / 派发 Task 27 时发现的两个缺口：前者是 `leadDays` 为负或 `NaN` 时 `addDays` 会抛 `RangeError`，后者是 `preOrderLeadDays` 根本没有界面能改——都已写成独立任务，见各自小节）。前五个是纯域层（每一步都能独立跑测试），20 号之后才碰界面，因为界面依赖的签名必须先生效。**Task 30 是收尾与重新上线**：`### Task 14` 的内容（备份安全网、PWA、DEPLOY.md、README）**已在第一版落地并上线**，本组任务不再重做它，改完之后按 Task 30 重新构建与推送即可。
+> **顺序（任务编号是身份，不是执行顺序）**：`22 → 23 → 23b → 24 → 25 → 26 → 27 → 27b → 27c → 23c → 28 → 29 → 30`（**23b / 27b / 27c / 23c** 都是控制器在复核前一个任务时发现并写进任务书的缺口：**23b** 是 `leadDays` 为负或 `NaN` 时 `addDays` 会抛 `RangeError`；**27b** 是 `preOrderLeadDays` 根本没有界面能改；**27c** 是预定阶段标签丢了设计 §3.9 的天数文案、且「预定中」的单子没有删除入口；**23c** 是 `updatePreOrder` 不像 `addPreOrder` 那样 trim `sellerName` / `collectDate`。后两个都是小改，但编号沿用它们所属的那一组）。前五个是纯域层（每一步都能独立跑测试），27 号之后才碰界面，因为界面依赖的签名必须先生效。**Task 30 是收尾与重新上线**：`### Task 14` 的内容（备份安全网、PWA、DEPLOY.md、README）**已在第一版落地并上线**，本组任务不再重做它，改完之后按 Task 30 重新构建与推送即可。
 >
 > **这一组的头号风险是数据，不是功能。** 用户手机上有真实数据，线上站址已在使用。所以 Task 22 排在第一位、并且是**唯一**允许碰 `AppData` 形状的任务；它必须做到：老数据照常打开、老备份照常恢复、**新备份（含预定单）能原样还原**。
 
@@ -4809,6 +4809,44 @@ export function setBatchChannel(data: AppData, batchId: string, channel: Channel
 > - 门禁：24 files / `Tests 565 passed (565)`（+2）、`✓ 52 modules`、lint 0/0 on 66 files、树干净（除控制器自己的计划书改动）。
 > - 红态实测：`leadDays = -1` + 当天 → `AssertionError: expected 'upcoming' to be 'due_soon'`；`leadDays = NaN` + 当天 → `RangeError: Invalid time value`。**这正是控制器更正后的事实**（负数不抛，只有 `NaN` 抛）。
 > - 顺带落实的三条注释：`overdue`/`due_soon` 合组不排状态优先级（`today > collectDate` 与 `today === collectDate` 互斥）、`'2026-02-30'` 刻意不做日历校验、判定顺序以「合法 `leadDays`」为前提。
+
+---
+
+### Task 23c: `updatePreOrder` 也 trim `sellerName` / `collectDate`
+
+**Goal:** 让域层的「改」与「建」对同两个字段同一个存法——`addPreOrder` 存 `trim()` 之后的值，`updatePreOrder` 现在是照原样存。
+
+**为什么有这一条任务：** `src/domain/actions.ts:343 addPreOrder` 的 JSDoc `:336-338` 写明了 trim 的理由——`sellerName` 与 `collectDate` 会被拿去**排序与比日期**，前后带空格的 `' 2026-10-20 '` 会让字典序比较**静默失效**，是那种「界面看着正常、提醒就是不来」的故障。而 `:375 updatePreOrder` 里的 `keepOrSet(patch.collectDate, order.collectDate)`（`:402`）**不 trim**：同一字段、两条写路径、两种存法。Task 27 在表单层（`src/ui/preOrderForm.ts:95-106 preOrderPatch`）先挡了一道，但那是**界面**在补域层的窟窿——将来任何一个别的调用方（导入、将来的批量编辑）都会漏。
+
+**Files:**
+- Modify: `src/domain/actions.ts`
+- Modify: `src/domain/actions.test.ts`
+
+**Interfaces:**
+- Consumes: `keepOrSet`（`src/domain/actions.ts:189-191`）
+- Produces: 无新导出（只改 `updatePreOrder` 内部）
+
+**必须满足的行为**
+- `updatePreOrder` 里 `sellerName` 与 `collectDate` 两个键，写入前 `.trim()`；**其余四个键（`sellerContact` / `expectedCount` / `traits` / `note`）一字不改**（自由文本，用户打成什么样就存什么样——`addPreOrder` 也是这样，`traits` / `note` 从不 trim）。
+- `trim()` 之后是空串时**照原样写入空串**（不要"空了就保留旧值"）：域层保持宽松、界面负责提示，与 `addPreOrder` 只管"少了就没法去收"三样、`addCostItem` 不 trim 是同一套口径。
+- 一次只改 `sellerName` 时，`collectDate` 保持原值**且连引用都不换**（`keepOrSet` 的既有性质，别为了 trim 重写整个函数体）。
+- 既有 `actions.test.ts` 里关于 `updatePreOrder` 的断言一条都不许改；如果有一条断言的是「带空格的值原样存下来」，那是**旧行为的断言**，改成断言 trim 后的值并在报告里点名它。
+
+**测试要求**（`src/domain/actions.test.ts`）
+- `updatePreOrder(data, id, { collectDate: ' 2026-10-20 ' })` → 存下 `'2026-10-20'`（**并且 `preOrderStage` 能因此正常判出 `due_soon`/`overdue`**：这一条要真的调一次 `preOrderStage`，只断言字符串相等不够——这条测试存在的意义就是钉住"提醒能正常来"）。
+- `updatePreOrder(data, id, { sellerName: '  老李  ' })` → `'老李'`。
+- `updatePreOrder(data, id, { note: ' 两头猪钱  ' })` → **原样带空格存下来**（证明只动了两个键，不是"顺手全都 trim"）。
+- 只改 `sellerName` 时 `collectDate` 的值不变。
+
+**Steps**
+- [ ] **Step 1**：先写失败测试（红态：`expected ' 2026-10-20 ' to be '2026-10-20'`）。
+- [ ] **Step 2**：改 `updatePreOrder` 里那两行。
+- [ ] **Step 3**：`npx vitest run` / `npm run build` / `npm run lint`。
+- [ ] **Step 4**：提交：
+  ```bash
+  git add src/domain/actions.ts src/domain/actions.test.ts
+  git commit -m "fix(domain): 改预定单也 trim 日期与卖家名"
+  ```
 
 ---
 
@@ -5054,7 +5092,7 @@ export function setBatchChannel(data: AppData, batchId: string, channel: Channel
   - 一行标题「预定单」+ 一个「+ 记一张」按钮（展开新建表单）。
   - `duePreOrderCount(data, today) > 0` 时，标题下挂一条醒目提醒：**「有 N 张该去收了」**（橙/红字，与既有 `text-red-500` / `text-emerald-600` 的配色体例一致）。
   - 卡片列表严格按 `preOrderList(data, today)` 的顺序渲染，每张卡显示：卖家名、`约 ${expectedCount} 只`、`${collectDate} 去收`、一个阶段标签（`upcoming`「还没到日子」/ `due_soon` 与 `overdue` 都显示「**该去收了**」、`received`「已收货」、`cancelled`「黄了」+ 原因）。
-  - 没有预定单时**不渲染整块**（与「报」页空态的处理一致：空时不占位置），而不是显示一个空标题。
+  - 没有预定单时**不渲染标题、不渲染提醒、不渲染空列表**（与「报」页空态的处理一致：空时不占位置）。**但要留一个全宽的虚线按钮「+ 记一张预定单」**——这是全仓唯一能建第一张预定单的入口（Task 27 实施时 `git grep` 确认 `.tsx` 里 `addPreOrder` / `preOrders` / `预定单` 零命中），严格「整块不渲染」会让这个功能永远进不去。（控制器已裁定：这一条是任务书原来的写法漏了，虚线按钮保留。）
 - 每张卡的动作：
   - `status === 'reserved'`（阶段是 `upcoming` / `due_soon` / `overdue` 三者之一）：**「收货」「改」「黄了」**三个按钮。`overdue` 时「收货」用主色突出。
   - `received`：只显示「已收货」与批次名（可点进那个批次）+「改备注」（**只有 `note` 可改**）。批次名自己查：`data.batches.find(b => b.id === order.receivedBatchId)`（`receivedBatchId` 类型上是 `string | null`，理论上查不到就只显示「已收货」不给链接，别写 `!`）。
@@ -5074,12 +5112,22 @@ export function setBatchChannel(data: AppData, batchId: string, channel: Channel
 **Steps**
 - [ ] **Step 1**：写 `preOrderForm.test.ts` 与实现（这部分与界面无关，可以先红后绿）。
 - [ ] **Step 2**：改 `src/ui/pages/DogsPage.tsx`（只加列表视图内的预定单区，**详情视图不碰**）。
-- [ ] **Step 3**：`npx vitest run` / `npm run build` / `npm run lint`（注意 `noUnusedLocals`：`preOrderStage` 之类没用到的符号不要 import）。**模块数应从 52 变为 53**（`preOrderForm.ts` 是这一批里第一个进 bundle 的新文件）；如果没变，说明界面其实没接上。
+- [ ] **Step 3**：`npx vitest run` / `npm run build` / `npm run lint`（注意 `noUnusedLocals`：`preOrderStage` 之类没用到的符号不要 import）。**模块数应从 52 变为 55**（一次进三个新模块：`src/domain/preOrders.ts`——它在 Task 26 结束时还不在生产 bundle 里——加上 `preOrderForm.ts` 与 `ConfirmDialog.tsx`）；如果没变，说明界面其实没接上。**实际结果确实是 55**（见下面的实施记录）。
 - [ ] **Step 4**：提交：
   ```bash
   git add src/ui/preOrderForm.ts src/ui/preOrderForm.test.ts src/ui/components/ConfirmDialog.tsx src/ui/pages/DogsPage.tsx
   git commit -m "feat(ui): 预定单区（记单、提醒、收货、黄了）"
   ```
+
+> **Task 27 实施记录（2026-10-06）—— 提交 `f0dcd49`**（4 files / +862 / −3：`src/ui/preOrderForm.ts` 新建 116 行、`src/ui/preOrderForm.test.ts` 新建 209 行 / 23 条、`src/ui/components/ConfirmDialog.tsx` 新建 44 行、`src/ui/pages/DogsPage.tsx` 564 → 1054 行）
+>
+> **门禁**：`Test Files 26 passed (26)` / `Tests 657 passed (657)`（基线 25 / 634，**+23**）、`tsc -b` 静默 + **`✓ 55 modules`**（基线 52）、`npx oxlint --format=default` `Found 0 warnings and 0 errors.`（71 files）、`git status --short` 空。控制器独立复跑一致。红态：`Error: Cannot find module './preOrderForm' imported from .../src/ui/preOrderForm.test.ts`（0 test / 1 failed suite）。
+>
+> **落点**：`src/ui/preOrderForm.ts` 的 8 个导出——`:24 PreOrderDraft`、`:37 emptyPreOrderDraft()`、`:45 draftFromOrder(order)`、`:64 parseExpectedCount(raw)`（转发 `parseAliveInput`）、`:75 draftIssue(draft)`、`:85 canSubmitPreOrder(draft)`（体就是 `draftIssue(draft) === null`）、`:95 preOrderPatch(draft)`、`:112 preOrderInput(draft, createdAt)`。`src/ui/components/ConfirmDialog.tsx:12` 签名 `{ open; title; message; confirmLabel; onConfirm; onClose }`（内部 `Modal` + 「算了」/红底确认键）。`DogsPage.tsx`：`:106` `const [today] = useState(() => todayLocalIso(new Date()))`、`:320-546` 预定单区、`:555-558` 批次卡 `onClick` 补 `closePreOrderPanels()`、`:579-612` 收货弹窗、`:614-641` 黄了弹窗、`:643-650` ConfirmDialog。**详情视图一个字节没动**（机械验证：对齐到 `const batch = data.batches.find(b => b.id === openBatchId)`，旧 165–564 行与新 655–1054 行 join 后全等）。
+>
+> **控制器裁定（10 条判断，9 条保留）**：①**空态虚线按钮保留**——任务书漏写，见上一条；②**模块数基线修正为 55**：`src/domain/preOrders.ts` 在 Task 26 结束时**不在生产 bundle 里**（只被它自己的测试引用），本次一次进三个新模块（`preOrders.ts` + `preOrderForm.ts` + `ConfirmDialog.tsx`），所以 52 → 55 而不是 53；**Task 28 / 29 的预期模块数相应改为 56 / 57**；③lint 判定按 `exit code 0` + `--format=default` 的汇总行（本机 oxlint 1.86.0 干净时不带参数无输出）；④**「删掉」只给 `cancelled` 卡**这处**不保留**——设计 §3.9 `:371` 写的是「记错了可以整条删掉（`deletePreOrder`）……**例外**：已经「已收货」的预定单不能删」，域层 `deletePreOrder` 也允许删「预定中」；所以「预定中」的卡也要有删除入口 → **Task 27c**；⑤卡片多显示联系方式——保留（设计字段表里有，不显示等于白存）；⑥多拆 `parseExpectedCount` / `preOrderPatch` / `preOrderInput` 三个纯函数——保留（`canSubmitPreOrder` 因此能是一句话，且可单测）；⑦表单层 trim——保留，但**它反映的域层不对称要一并修掉** → **Task 23c**；⑧`const [today] = useState(() => todayLocalIso(new Date()))`——保留（`MoneyPage.tsx:34` / `QuarantinePage.tsx:42` / `ReportPage.tsx:51` 的既有体例）；⑨**阶段标签两者同文案「该去收了」→ 不保留**：设计 §3.9 `:352-356` 明确 `overdue` 显示「已经过期 N 天」、`due_soon` 显示「还有 N 天去收」/「今天去收」，两者**共用一个「该去收了」的分组**（挂到页顶）但**卡片文案不同** → **Task 27c**；⑩`setReceiveDone(name)` 必须排在 `closePreOrderPanels()` 之后——保留（注释已写）。
+>
+> **交给后续任务的硬提醒**：①**Task 27b 不许改 `DogsPage.tsx`**——`preOrderList` / `duePreOrderCount` 自己从 `data.settings.preOrderLeadDays` 取提前量，设置项一接上界面自动生效；②`ConfirmDialog` 的取消键文案写死「算了」，Task 29 若要改这个组件会连带影响预定单；③收货 / 黄了 / 删除三个弹窗都**没有 Escape 关闭**（`Modal` 本来就没有，Task 27 不许改它）；④`today` 是挂载时取的常量，页面开着跨零点提醒不会自己刷新（与 Money / Quarantine / Report 三页同款行为，**这是刻意的**：跟着"今天"变会让渲染中随时跳变）；⑤**DogsPage 的交互层没有任何自动化测试**（本仓没有 React 测试设施），四条关键路径——空态按钮、四状态按钮、收货三个值、删掉确认——**必须靠控制器 CDP 走查保证**。
 
 ---
 
@@ -5115,6 +5163,54 @@ export function setBatchChannel(data: AppData, batchId: string, channel: Channel
   ```bash
   git add src/domain/settlement.ts src/domain/settlement.test.ts src/ui/pages/SettingsPanel.tsx
   git commit -m "feat(ui): 预定单提醒提前天数进设置"
+  ```
+
+---
+
+### Task 27c: 预定卡片的天数文案 + 「预定中」也能删掉
+
+**Goal:** 把 Task 27 丢掉的两种界面文案补回来，并让记错的「预定中」单子能直接删掉。两处都是设计 §3.9 已经写死、Task 27 实现时按任务书的旧描述做偏了的地方（控制器裁定见 Task 27 实施记录第 ④ / ⑨ 条）。
+
+**为什么有这一条任务：** 设计 §3.9 `:348-356` 的阶段表里，`overdue` 的界面文案是「**已经过期 N 天**」、`due_soon` 是「**还有 N 天去收**」/「**今天去收**」，两者只是**共用「该去收了」这个分组**（挂到页顶那一行提醒），**卡片上的文案不同**；Task 27 把两者都写成了「该去收了」，于是「约的是上周三」和「约的是后天」在卡片上长得一模一样，用户得自己去看日期才知道急不急。另一半：设计 §3.9 `:371` 明写「记错了可以整条删掉（`deletePreOrder`）……**例外**：已经「已收货」的预定单不能删」，而 Task 27 只给 `cancelled` 卡画了「删掉」按钮，`reserved` 的单子只能先「黄了」再删——为了改一个打错的字，得先给单子盖一个「不收了」的章。
+
+**Files:**
+- Modify: `src/ui/preOrderForm.ts`
+- Modify: `src/ui/preOrderForm.test.ts`
+- Modify: `src/ui/pages/DogsPage.tsx`
+
+**Interfaces:**
+- Consumes: `daysBetween`（`src/domain/quarantine.ts:65`，签名 `daysBetween(fromIso: string, toIso: string): number`，**两侧按 UTC 解析、非法串返回 `NaN`**）、`PreOrderStage`（`src/domain/preOrders.ts:19`）、`ConfirmDialog`
+- Produces: `src/ui/preOrderForm.ts` 新增一个纯函数，**逐字签名**：
+  ```ts
+  export function stageText(order: PreOrder, stage: PreOrderStage, today: string): string
+  ```
+
+**必须满足的行为**
+- `stageText` 逐字返回（`N` 是算出来的天数，不带前导零）：
+  - `cancelled` → `'黄了'`
+  - `received` → `'已收货'`
+  - `overdue` → `` `已经过期 ${daysBetween(order.collectDate, today)} 天` ``
+  - `due_soon` → 今天就是 `collectDate` 时 `'今天去收'`，否则 `` `还有 ${daysBetween(today, order.collectDate)} 天去收` ``
+  - `upcoming` → `'还没到日子'`
+- **非法日期不能吐出 `NaN`**：`collectDate` 是手写坏数据（空串、`'不是日期'`）时 `daysBetween` 返回 `NaN`，此时 `overdue` / `due_soon` 一律回落成 `'该去收了'`。判定用 `Number.isFinite(d)`，**不要**去 import `preOrders.ts` 里那个没导出的日期正则，也不要在 UI 层复制一份正则。
+- `DogsPage.tsx` 里那张 `PRE_ORDER_STAGE_LABEL: Record<PreOrderStage, string>` 常量**删掉**（它不再能表达 `overdue` / `due_soon`），卡片上的阶段标签改成调 `stageText(row.order, row.stage, today)`；`PRE_ORDER_STAGE_CLASS`（颜色表）保留不动——`overdue` 与 `due_soon` 仍然是同一个颜色。
+- 页面顶部那行提醒文案 **不变**，仍是「有 N 张该去收了」（`duePreOrderCount`）。
+- **「预定中」的卡（`status === 'reserved'`，即阶段是 `upcoming` / `due_soon` / `overdue`）加上「删掉」按钮**，走同一个 `ConfirmDialog`，`message` 必须写明「预定单删掉不影响任何批次，也删不掉已经记过的账」。四个按钮（收货 / 改 / 黄了 / 删掉）在 **375px 宽下不许挤成一团结**——可以把「删掉」做成更小的次要样式或放到卡片第二行，具体排布由你定，但要在报告里贴出你选的排布方式。
+- `cancelled` 卡仍然是「原因 + 删掉」；`received` 卡**仍然没有**删除按钮（设计 §3.9 的例外）。
+
+**测试要求**（`preOrderForm.test.ts`）
+- `stageText` 六条：`cancelled` / `received` / `upcoming` 各一条逐字断言；`overdue`（`collectDate = '2026-10-01'`、`today = '2026-10-04'` → `'已经过期 3 天'`）；`due_soon` 两天各一条（`collectDate = '2026-10-07'`、`today = '2026-10-04'` → `'还有 3 天去收'`；`collectDate === today` → `'今天去收'`）。
+- 坏日期一条：`collectDate = ''` 配 `overdue` → `'该去收了'`；`collectDate = '2026-02-30'` 这类形状对但日历上不存在的串**不要求**特别处理（照 `daysBetween` 的结果走）。
+- 既有 23 条断言一条都不改。
+
+**Steps**
+- [ ] **Step 1**：先写 `stageText` 的失败测试（红态：`TypeError: stageText is not a function`）。
+- [ ] **Step 2**：实现 `stageText`，改 `DogsPage.tsx` 的阶段标签与「删掉」按钮。
+- [ ] **Step 3**：`npx vitest run` / `npm run build` / `npm run lint`。模块数**不变（仍是 55）**——本任务不新增文件。
+- [ ] **Step 4**：提交（提交信息里要能看出改的是预定单卡片）：
+  ```bash
+  git add src/ui/preOrderForm.ts src/ui/preOrderForm.test.ts src/ui/pages/DogsPage.tsx
+  git commit -m "fix(ui): 预定单卡片显示还有几天，预定中的也能删"
   ```
 
 ---
@@ -5159,7 +5255,7 @@ export function setBatchChannel(data: AppData, batchId: string, channel: Channel
 **Steps**
 - [ ] **Step 1**：写 `batchCostsForm.test.ts` 与实现。
 - [ ] **Step 2**：改 `src/ui/pages/DogsPage.tsx` 详情视图（补成本区块 + 头部渲染卖家与留痕）。
-- [ ] **Step 3**：`npx vitest run` / `npm run build` / `npm run lint`。**不要求浏览器走查**（控制器用 CDP 探针验）。模块数应从 53 变成 54（`batchCostsForm.ts` 是新进 bundle 的文件）。
+- [ ] **Step 3**：`npx vitest run` / `npm run build` / `npm run lint`。**不要求浏览器走查**（控制器用 CDP 探针验）。模块数应从 55 变成 56（`batchCostsForm.ts` 是新进 bundle 的文件）。
 - [ ] **Step 4**：提交：
   ```bash
   git add src/ui/batchCostsForm.ts src/ui/batchCostsForm.test.ts src/ui/pages/DogsPage.tsx
@@ -5213,7 +5309,7 @@ export function setBatchChannel(data: AppData, batchId: string, channel: Channel
 **Steps**
 - [ ] **Step 1**：写 `entryForm.test.ts` 与实现。
 - [ ] **Step 2**：改 `src/ui/pages/MoneyPage.tsx`（行内按钮、两个弹窗、显示全部）。
-- [ ] **Step 3**：`npx vitest run` / `npm run build` / `npm run lint`。**不要求浏览器走查**（控制器用 CDP 探针验）。模块数应从 54 变成 55（`entryForm.ts` 是新进 bundle 的文件）。
+- [ ] **Step 3**：`npx vitest run` / `npm run build` / `npm run lint`。**不要求浏览器走查**（控制器用 CDP 探针验）。模块数应从 56 变成 57（`entryForm.ts` 是新进 bundle 的文件）。
 - [ ] **Step 4**：提交：
   ```bash
   git add src/ui/entryForm.ts src/ui/entryForm.test.ts src/ui/pages/MoneyPage.tsx
@@ -5236,7 +5332,7 @@ export function setBatchChannel(data: AppData, batchId: string, channel: Channel
 - **真机走查由控制器用 CDP 探针做**（与 Task 20 / 21 同一套骨架：`npx vite preview --port 5199 --strictPort` 后台作业 + 探针脚本 + 真实 IndexedDB），至少覆盖：
   1. **老数据不被打坏**：往 IndexedDB 里写一个**不含 `preOrders`、不含 `preOrderLeadDays`** 的旧 `AppData` → 刷新 → 五个标签页都能打开、「狗」页不空白、「报」页照常出数字。
   2. **导出 → 清空 → 导入**：导出后含预定单（写进文件里核对一次），清站点数据后导入，**预定单逐条还原**（这条专门钉住 `preOrders: data.preOrders ?? []` 那个陷阱）。
-  3. 记一张预定单 → 改日期到"今天" → 顶部出现「有 1 张该去收了」→ 收货（实收只数比约定的少 1）→ 批次详情里卖家与「比约定的少 1 只」都看得到。
+  3. 记一张预定单（空态那块虚线按钮是唯一入口）→ 改日期到"今天" → 卡片上写着「**今天去收**」、顶部出现「有 1 张该去收了」→ 再改成昨天 → 卡片变「**已经过期 1 天**」→ 一张「预定中」的单子能直接删掉（弹确认框）→ 重记一张收货（实收只数比约定的少 1）→ 批次详情里卖家与「比约定的少 1 只」都看得到。
   4. 批次详情「补成本」：四行填数 → 确认弹窗笔数正确 → 补完后「这一批已记成本」数字与笔数都变、橙字消失。
   5. 「钱」页：改一笔金额 → 对账单与分账跟着变；删一笔销售流水 → 那只狗回到在库；「显示全部」在超过 60 笔时出现且能展开。
   - 0 条 `Runtime.exceptionThrown`、0 条 `console.error`。
