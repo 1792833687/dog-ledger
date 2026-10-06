@@ -1,18 +1,19 @@
 import { useMemo, useState } from 'react'
 import type { ChannelId } from '../../domain/types'
 import type { PlanResult } from '../../domain/planning'
-import { createBatchFromPlan, plan } from '../../domain/planning'
+import { receiveBatch, plan } from '../../domain/planning'
 import { compareChannelCosts } from '../../domain/channels'
-import { formatMoney } from '../../domain/money'
+import { formatMoney, parseMoney } from '../../domain/money'
 import { useAppData } from '../../state/useAppData'
 import { Field } from '../components/Field'
+import { Modal } from '../components/Modal'
 import type { ChannelRowText } from '../channelView'
 import {
   channelInputsFromRows, channelName, comparisonChannels, defaultAliveInput,
   emptyChannelRows, parseAliveInput,
 } from '../channelView'
 import type { PlanFieldKey, PlanTextForm } from '../planForm'
-import { defaultPlanText, localTimeHm, parsePlanText, todayLocalIso } from '../planForm'
+import { defaultPlanText, fenToTextInput, localTimeHm, parsePlanText, todayLocalIso } from '../planForm'
 
 /** 一行没填过的渠道：三格全空 = 全按 0 算。 */
 const EMPTY_ROW: ChannelRowText = { unitPrice: '', extraPerDog: '', fixedCost: '' }
@@ -70,6 +71,12 @@ export function CalculatePage() {
   const [channelRows, setChannelRows] = useState<Record<string, ChannelRowText>>(() => emptyChannelRows())
   const [selectedChannel, setSelectedChannel] = useState<ChannelId>('undecided')
 
+  // 收货弹窗：只问两个数 —— 实际收到几只、每只多少钱。默认就是上面表单里刚填的那两个，
+  // 因为它们正是用户出门前估的数；不相等时改这里，不回头改表单（表单要留着算下一次）。
+  const [receiveOpen, setReceiveOpen] = useState(false)
+  const [receiveCountText, setReceiveCountText] = useState('')
+  const [receivePriceText, setReceivePriceText] = useState('')
+
   const { input, errors } = useMemo(
     () => parsePlanText(form, data.settings),
     [form, data.settings],
@@ -90,6 +97,19 @@ export function CalculatePage() {
     ? compareChannelCosts(result.breakEvenPriceFen, aliveParsed, rows)
     : null
 
+  // 收货弹窗的校验。只数必须是至少 1 的整数；收购价留空当 0（等于「这批没花钱」，
+  // 合法），填了就必须是数字。两个都过了才允许点确认。
+  const receiveCount = parseAliveInput(receiveCountText)
+  const receiveCountError = receiveCount === null || receiveCount < 1
+    ? '实收只数要填一个整数，至少 1 只'
+    : undefined
+  const receivePriceTrimmed = receivePriceText.trim()
+  const receivePriceFen = receivePriceTrimmed === '' ? 0 : parseMoney(receivePriceTrimmed)
+  const receivePriceError = receivePriceFen === null || receivePriceFen < 0
+    ? '每只收购价只能填数字，例如 1200 或 1200.50'
+    : undefined
+  const receiveReady = receiveCountError === undefined && receivePriceError === undefined
+
   function set(key: PlanFieldKey) {
     return (value: string) => {
       setForm(prev => ({ ...prev, [key]: value }))
@@ -105,17 +125,32 @@ export function CalculatePage() {
     }
   }
 
-  function handleCreateBatch() {
+  /** 打开收货弹窗：把表单里刚填的数填成默认值，用户确认前还能改。 */
+  function openReceive() {
+    setReceiveCountText(form.n)
+    setReceivePriceText(fenToTextInput(input.purchasePrice))
+    setReceiveOpen(true)
+  }
+
+  function handleReceive() {
+    if (receiveCount === null || receivePriceFen === null) return
     // `now` 必须留在事件处理器里：把它提到组件体（渲染期）会被 lint 的 react(purity)
     // 拦下（本仓门禁是 0 warning），而且重新渲染时会拿到"另一个现在"。
     // 同一个 `now` 同时喂给批次名和日期 —— 跨过午夜那一下也不会出现「名字是昨天、日期是今天」。
     const now = new Date()
-    // 默认名带上时间：同一天建两个只数相同的批次（上午 2 只、下午 2 只）就不会再重名，
+    // 默认名带上时间：同一天收两批只数相同的狗（上午 2 只、下午 2 只）就不会再重名，
     // 批次选择器里也就不会出现两条读起来一模一样的选项。
-    const name = `收狗 ${input.n} 只 ${localTimeHm(now)}`
-    const date = todayLocalIso(now)
-    void update(d => createBatchFromPlan(d, input, name, date, selectedChannel))
+    // 名字里的只数是**实收**只数，不是上面表单里预估的那个。
+    const name = `收狗 ${receiveCount} 只 ${localTimeHm(now)}`
+    void update(d => receiveBatch(d, {
+      name,
+      date: todayLocalIso(now),
+      count: receiveCount,
+      unitPriceFen: receivePriceFen,
+      channel: selectedChannel,
+    }))
     setCreated({ name, channel: selectedChannel })
+    setReceiveOpen(false)
   }
 
   return (
@@ -349,18 +384,40 @@ export function CalculatePage() {
 
       <button
         type="button"
-        onClick={handleCreateBatch}
+        onClick={openReceive}
         disabled={input.n <= 0}
         className="mt-4 w-full rounded-xl bg-gray-900 py-3 text-sm font-semibold text-white disabled:opacity-40"
       >
-        就按这个收 —— 一键建批次开始记账
+        收货
       </button>
 
       {created && (
         <p className="mt-2 text-center text-xs text-emerald-600">
-          已建批次「{created.name}」，去向「{channelName(created.channel)}」。到「狗」标签页记账。
+          已收货，批次「{created.name}」，去向「{channelName(created.channel)}」。到「狗」标签页记账。
         </p>
       )}
+
+      <Modal open={receiveOpen} title="收货" onClose={() => setReceiveOpen(false)}>
+        <Field
+          label="实收只数" value={receiveCountText} onChange={setReceiveCountText}
+          suffix="只" inputMode="numeric" error={receiveCountError}
+        />
+        <Field
+          label="每只收购价" value={receivePriceText} onChange={setReceivePriceText}
+          suffix="元" error={receivePriceError}
+        />
+        <p className="mt-1 text-xs text-gray-500">
+          只记收购款。运输、疫苗、检疫与病死犬处理费都还没付，等真付了钱去「狗」标签页补账。
+        </p>
+        <button
+          type="button"
+          onClick={handleReceive}
+          disabled={!receiveReady}
+          className="mt-3 w-full rounded-xl bg-emerald-600 py-3 text-sm font-semibold text-white disabled:opacity-40"
+        >
+          收货
+        </button>
+      </Modal>
     </div>
   )
 }

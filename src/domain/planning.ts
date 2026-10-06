@@ -70,39 +70,46 @@ export function plan(settings: Settings, input: PlanInput): PlanResult {
 }
 
 /**
- * 把一次决策直接变成可记账的批次：建批次 + N 只狗 + 运输支出 + 每只狗的收购、疫苗与检疫支出。
- * 纯函数，不修改传入的 data。所有支出默认由池子直付（paidBy: 'pool'）。
+ * 建批次 + 建狗：全仓唯一的实现。收货（预定单与「算」页直接收货）都走这里。
  *
- * 不记无害化处理费：那是「预估会死几只」的假设，不是已经发生的支出。
+ * 只写收购款这一类流水——运输 / 疫苗 / 检疫 / 处理费要等真正付了钱，
+ * 由补账（`addBatchCosts`）另记。这是「先做后补账」的落点：
+ * 估算只是保本价的输入，不是已经发生的支出。
+ *
+ * 纯函数，不修改传入的 data。收购款默认由池子直付（paidBy: 'pool'）。
  */
-export function createBatchFromPlan(
+export function addBatchWithDogs(
   data: AppData,
-  input: PlanInput,
-  batchName: string,
-  date: string,
-  plannedChannel: ChannelId = 'undecided',
-): AppData {
-  const batchId = newId()
-  const batch: Batch = {
-    id: batchId, name: batchName, date, source: '', note: '', status: 'active', plannedChannel,
+  input: {
+    name: string
+    date: string
+    count: number
+    unitPriceFen: Money
+    channel: ChannelId
+    source: string
+    note: string
+  },
+): { data: AppData; batchId: string | null } {
+  const count = Math.floor(input.count)
+  // 一只都没收到就什么都不建：建一个没有狗的空批次只会让后面每个地方都要判空
+  if (!Number.isFinite(count) || count < 1) {
+    return { data, batchId: null }
   }
 
-  const n = Math.max(0, Math.floor(input.n))
+  const batchId = newId()
+  const batch: Batch = {
+    id: batchId, name: input.name, date: input.date, source: input.source, note: input.note,
+    status: 'active', plannedChannel: input.channel,
+  }
+
+  const unitPriceFen = Math.max(0, Math.round(input.unitPriceFen))
   const dogs: Dog[] = []
   const entries: LedgerEntry[] = []
 
-  const baseEntry = {
-    date, paidBy: 'pool' as const, payee: null, batchId, dogId: null as string | null, note: '',
-  }
-
-  if (input.freight > 0) {
-    entries.push({ id: newId(), type: 'expense', category: 'transport', amount: input.freight, ...baseEntry })
-  }
-
-  for (let i = 1; i <= n; i++) {
+  for (let i = 1; i <= count; i++) {
     const dogId = newId()
     dogs.push({
-      id: dogId, batchId, code: `${batchName}-${i}`, breed: '',
+      id: dogId, batchId, code: `${input.name}-${i}`, breed: '',
       sex: 'unknown', ageMonths: null, status: 'in_stock', note: '',
       // 刚买回来的狗还没接种、没检测、没证明。绝不预填今天——
       // 那会让检疫阶段的推导从第一天起就是错的。
@@ -113,22 +120,29 @@ export function createBatchFromPlan(
       quarantineCertIssuedOn: null,
       quarantineCertValidUntil: null,
     })
-    if (input.purchasePrice > 0) {
-      entries.push({ id: newId(), type: 'expense', category: 'purchase', amount: input.purchasePrice, ...baseEntry, dogId })
-    }
-    if (input.medicalPerDog > 0) {
-      entries.push({ id: newId(), type: 'expense', category: 'medical', amount: input.medicalPerDog, ...baseEntry, dogId })
-    }
-    // 检疫费在建批次时就记上：买回来就得开始检疫流程，而这笔钱必须在能出售之前付掉。
-    if (input.quarantinePerDog > 0) {
-      entries.push({ id: newId(), type: 'expense', category: 'quarantine', amount: input.quarantinePerDog, ...baseEntry, dogId })
+    if (unitPriceFen > 0) {
+      entries.push({
+        id: newId(), type: 'expense', category: 'purchase', amount: unitPriceFen,
+        date: input.date, paidBy: 'pool', payee: null, batchId, dogId, note: '',
+      })
     }
   }
 
   return {
-    ...data,
-    batches: [...data.batches, batch],
-    dogs: [...data.dogs, ...dogs],
-    entries: [...data.entries, ...entries],
+    data: {
+      ...data,
+      batches: [...data.batches, batch],
+      dogs: [...data.dogs, ...dogs],
+      entries: [...data.entries, ...entries],
+    },
+    batchId,
   }
+}
+
+/** 「算」页直接收货：没有来源与备注，其余与 `addBatchWithDogs` 完全一样。 */
+export function receiveBatch(
+  data: AppData,
+  input: { name: string; date: string; count: number; unitPriceFen: Money; channel: ChannelId },
+): AppData {
+  return addBatchWithDogs(data, { ...input, source: '', note: '' }).data
 }

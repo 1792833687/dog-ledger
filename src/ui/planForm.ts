@@ -132,7 +132,7 @@ export function parseCount(raw: string): number | null {
 }
 
 export interface ParsedPlanText {
-  /** 可以直接喂给 `plan()` / `createBatchFromPlan()` 的入参 */
+  /** 可以直接喂给 `plan()` 的入参 */
   input: PlanInput
   /** 空对象 = 全部合法。非空时界面不应展示保本价 */
   errors: PlanFieldErrors

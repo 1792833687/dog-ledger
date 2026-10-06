@@ -1,5 +1,6 @@
 import type { AppData, Batch, ChannelId, CostItemDef, Dog, DogStatus, LedgerEntry, Money, PreOrder, Settings } from './types'
 import { newId } from './types'
+import { addBatchWithDogs } from './planning'
 
 /**
  * 记账动作层。
@@ -11,6 +12,10 @@ import { newId } from './types'
  * - 不调用 `new Date()`：`today` 一律由调用方作为 `'YYYY-MM-DD'` 字符串传进来。
  *   否则同一天在东八区晚上 8 点前后会算出两个不同的日期，账目会对不上。
  * - 只依赖 `./types`。这里不碰 React、不碰 storage。
+ *   唯一的例外是 `receivePreOrder`：收货那一件事既是改台账也是改预定单，
+ *   如果分成两个动作就必然要两次 `update`，中途失败会留下「批次建了、单子还是预定中」的残局。
+ *   所以它直接调用 `./planning` 的 `addBatchWithDogs`，一次算完全部结果。
+ *   `./planning` 自己只依赖 `./types`，不构成循环依赖。
  */
 
 export function createBatch(data: AppData, name: string, date: string): AppData {
@@ -429,4 +434,56 @@ export function deletePreOrder(data: AppData, preOrderId: string): AppData {
   const order = data.preOrders.find(o => o.id === preOrderId)
   if (!order || order.status === 'received') return data
   return { ...data, preOrders: data.preOrders.filter(o => o.id !== preOrderId) }
+}
+
+/**
+ * 收货：把一张预定单变成真实的一批狗，并把这张单子标成已收货。
+ *
+ * 一次调用算完全部结果（建批次、建狗、记收购款、写预定单四件事），调用方只需 `update` 一次。
+ * 分成「先建批次再改预定单」两次 `update` 的话，中途出问题就会留下
+ * 「批次已经建出来、单子还写着预定中」的残局，而那张单子再也收不了货。
+ *
+ * 只有收购价按只写进账：运输 / 疫苗 / 检疫 / 处理费留给补账，
+ * 卖家与留痕写进批次，好让日后翻这笔账时知道狗是从谁那儿来的。
+ *
+ * 守卫一律原样返回同一引用：找不到这张单子、已经不是预定中（收过或取消过）、实收只数小于 1。
+ * `name` / `date` 由界面算好传进来（本层不调用 `new Date()`）。
+ */
+export function receivePreOrder(
+  data: AppData,
+  preOrderId: string,
+  input: { name: string; date: string; receivedCount: number; unitPriceFen: Money },
+): AppData {
+  const order = data.preOrders.find(o => o.id === preOrderId)
+  if (!order || order.status !== 'reserved') return data
+
+  const receivedCount = Math.floor(input.receivedCount)
+  if (!Number.isFinite(receivedCount) || receivedCount < 1) return data
+
+  // 实收与约定差几只，要留在批次备注里：结算时回头对账全靠这句话
+  const diff = order.expectedCount - receivedCount
+  const diffNote = diff === 0 ? '' : `；比约定的${diff > 0 ? '少' : '多'} ${Math.abs(diff)} 只`
+
+  const created = addBatchWithDogs(data, {
+    name: input.name,
+    date: input.date,
+    count: receivedCount,
+    unitPriceFen: input.unitPriceFen,
+    channel: 'undecided',
+    source: order.sellerName,
+    note: `来自预定单：${order.sellerName}${diffNote}`,
+  })
+
+  // 先取出 id 再判空：直接读 created.batchId 的话，闭包里的收窄会失效
+  const batchId = created.batchId
+  if (batchId === null) return data
+
+  return {
+    ...created.data,
+    preOrders: created.data.preOrders.map(o => (
+      o.id === preOrderId
+        ? { ...o, status: 'received', receivedCount, receivedBatchId: batchId }
+        : o
+    )),
+  }
 }

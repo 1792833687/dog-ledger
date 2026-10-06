@@ -12,7 +12,8 @@ import { poolBalance, advanceBalance, contributedCapital, distributedTo } from '
 import { quarantineStatus } from './quarantine'
 import { validateSettings } from './settlement'
 import {
-  addPreOrder, updatePreOrder, cancelPreOrder, deletePreOrder, type AddPreOrderInput,
+  addPreOrder, updatePreOrder, cancelPreOrder, deletePreOrder, receivePreOrder,
+  type AddPreOrderInput,
 } from './actions'
 
 /** 建一个批次，并记一笔运输费 */
@@ -1246,6 +1247,155 @@ describe('cancelPreOrder 与 deletePreOrder', () => {
     cancelPreOrder(data, id, '黄了')
     deletePreOrder(data, id)
     expect(data.preOrders).toHaveLength(1)
+    expect(at(data, 0).status).toBe('reserved')
+  })
+})
+
+describe('receivePreOrder', () => {
+  const order: AddPreOrderInput = {
+    sellerName: '老李家', sellerContact: '13800000000', expectedCount: 4,
+    collectDate: '2026-10-20', traits: '黑色，公', note: '', createdAt: '2026-10-04T09:00:00.000Z',
+  }
+
+  const receive = { name: '收狗 2 只 09:10', date: '2026-10-20', receivedCount: 2, unitPriceFen: 60000 }
+
+  /** 取第 `index` 张预定单。下标越界就让测试炸掉，好过用 `!` 静音。 */
+  function at(data: AppData, index: number): PreOrder {
+    const found = data.preOrders[index]
+    if (!found) throw new Error(`第 ${index} 张预定单不存在`)
+    return found
+  }
+
+  /** 追加一张预定单，返回数据与它的 id。 */
+  function reserved(input: AddPreOrderInput = order) {
+    const data = addPreOrder(DEFAULT_DATA, input)
+    return { data, id: at(data, 0).id }
+  }
+
+  it('★ 一次调用原子做完四件事：建批次、建狗、记收购款、把预定单标成已收货', () => {
+    const { data, id } = reserved()
+    const next = receivePreOrder(data, id, receive)
+    expect(next.batches).toHaveLength(1)
+    expect(next.dogs).toHaveLength(2)
+    const batchId = next.batches[0].id
+    expect(next.dogs.every(d => d.batchId === batchId)).toBe(true)
+    expect(next.dogs.map(d => d.code)).toEqual(['收狗 2 只 09:10-1', '收狗 2 只 09:10-2'])
+    expect(next.entries.filter(e => e.batchId === batchId && e.category === 'purchase')).toHaveLength(2)
+    // 收货这一刻只写收购款，估算出来的运输 / 疫苗 / 检疫 / 处理费一个字都不进账
+    expect(next.entries.filter(e => e.category !== 'purchase')).toHaveLength(0)
+    const received = at(next, 0)
+    expect(received.status).toBe('received')
+    expect(received.receivedCount).toBe(2)
+    expect(received.receivedBatchId).toBe(batchId)
+  })
+
+  it('批次去向记未定，卖家写进批次来源，留痕写明来自哪张预定单', () => {
+    const { data, id } = reserved()
+    const next = receivePreOrder(data, id, receive)
+    expect(next.batches[0].plannedChannel).toBe('undecided')
+    expect(next.batches[0].source).toBe('老李家')
+    expect(next.batches[0].note).toBe('来自预定单：老李家；比约定的少 2 只')
+  })
+
+  it('收够数时留痕里不出现「比约定」', () => {
+    const { data, id } = reserved({ ...order, expectedCount: 2 })
+    const next = receivePreOrder(data, id, receive)
+    expect(next.batches[0].note).toBe('来自预定单：老李家')
+    expect(next.batches[0].note).not.toContain('比约定')
+  })
+
+  it('多收时写「多」与差额', () => {
+    const { data, id } = reserved({ ...order, expectedCount: 2 })
+    const next = receivePreOrder(data, id, { ...receive, receivedCount: 5 })
+    expect(next.batches[0].note).toBe('来自预定单：老李家；比约定的多 3 只')
+    expect(at(next, 0).receivedCount).toBe(5)
+    expect(next.dogs).toHaveLength(5)
+    expect(next.entries.filter(e => e.category === 'purchase')).toHaveLength(5)
+  })
+
+  it('找不到这张预定单 —— 原样返回同一引用', () => {
+    const { data } = reserved()
+    expect(receivePreOrder(data, '不存在的 id', receive)).toBe(data)
+  })
+
+  it('已经收过货的不能重复收 —— 原样返回同一引用', () => {
+    const { data, id } = reserved()
+    const once = receivePreOrder(data, id, receive)
+    expect(receivePreOrder(once, id, receive)).toBe(once)
+  })
+
+  it('已取消的不能收 —— 原样返回同一引用', () => {
+    const { data, id } = reserved()
+    const cancelled = cancelPreOrder(data, id, '卖家不卖了')
+    expect(receivePreOrder(cancelled, id, receive)).toBe(cancelled)
+  })
+
+  it('实收只数小于 1 —— 原样返回同一引用', () => {
+    const { data, id } = reserved()
+    expect(receivePreOrder(data, id, { ...receive, receivedCount: 0 })).toBe(data)
+    expect(receivePreOrder(data, id, { ...receive, receivedCount: -2 })).toBe(data)
+  })
+
+  it('实收只数不是有限数字 —— 原样返回同一引用', () => {
+    const { data, id } = reserved()
+    expect(receivePreOrder(data, id, { ...receive, receivedCount: NaN })).toBe(data)
+    expect(receivePreOrder(data, id, { ...receive, receivedCount: Infinity })).toBe(data)
+  })
+
+  it('实收只数带小数时向下取整，狗数与留痕都用取整后的数', () => {
+    const { data, id } = reserved()
+    const next = receivePreOrder(data, id, { ...receive, receivedCount: 2.9 })
+    expect(next.dogs).toHaveLength(2)
+    expect(at(next, 0).receivedCount).toBe(2)
+    expect(next.batches[0].note).toBe('来自预定单：老李家；比约定的少 2 只')
+  })
+
+  it('单价 0 时批次照样建出来，只是一笔收购款都不写', () => {
+    const { data, id } = reserved()
+    const next = receivePreOrder(data, id, { ...receive, unitPriceFen: 0 })
+    expect(next.batches).toHaveLength(1)
+    expect(next.dogs).toHaveLength(2)
+    expect(at(next, 0).status).toBe('received')
+    expect(next.entries).toHaveLength(0)
+  })
+
+  it('★ 收货不动该批次以外的任何数据', () => {
+    const base = seed()
+    const baseBatchId = base.batches[0].id
+    // 既有批次里放一只在库的狗，好确认收货之后它的 batchId 一个字符都没变
+    const withDog: AppData = {
+      ...base,
+      dogs: [...base.dogs, {
+        id: 'd-existing', batchId: baseBatchId, code: '一批-1', breed: '', sex: 'unknown',
+        ageMonths: null, status: 'in_stock', note: '',
+        rabiesVaccinatedOn: null, antibodyTestedOn: null, antibodyReportNo: '',
+        quarantineCertNo: '', quarantineCertIssuedOn: null, quarantineCertValidUntil: null,
+      }],
+    }
+    const withOrders = addPreOrder(addPreOrder(withDog, order), { ...order, sellerName: '老王' })
+    const first = at(withOrders, 0)
+    const other = at(withOrders, 1)
+    const next = receivePreOrder(withOrders, first.id, receive)
+
+    expect(next.batches).toHaveLength(2)
+    // 既有批次、它的运输费、设置与另一张预定单：连引用都不换
+    expect(next.batches[0]).toBe(withOrders.batches[0])
+    expect(next.entries[0]).toBe(withOrders.entries[0])
+    expect(next.settings).toBe(withOrders.settings)
+    expect(next.preOrders[1]).toBe(other)
+    expect(next.preOrders[1]).toEqual(other)
+    // 既有那只狗的 batchId 逐字不变；新收的狗全挂在新建的第二个批次上
+    expect(next.dogs[0]).toBe(withOrders.dogs[0])
+    expect(next.dogs[0].batchId).toBe(baseBatchId)
+    expect(next.dogs.slice(1).every(d => d.batchId === next.batches[1].id)).toBe(true)
+    expect(next.preOrders[0].receivedBatchId).toBe(next.batches[1].id)
+  })
+
+  it('不修改传入的 data 本身', () => {
+    const { data, id } = reserved()
+    const before = JSON.stringify(data)
+    receivePreOrder(data, id, receive)
+    expect(JSON.stringify(data)).toBe(before)
     expect(at(data, 0).status).toBe('reserved')
   })
 })

@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { DEFAULT_DATA, DEFAULT_SETTINGS } from './types'
-import { plan, createBatchFromPlan, type PlanInput } from './planning'
+import type { AppData } from './types'
+import { plan, addBatchWithDogs, receiveBatch, type PlanInput } from './planning'
 import { formatMoney } from './money'
 import { batchTotalCost, batchSummary } from './costing'
 
@@ -112,90 +113,184 @@ describe('plan 计入合规成本（检疫与无害化处理）', () => {
   })
 })
 
-describe('createBatchFromPlan', () => {
-  it('按计划创建批次、N 只狗、以及运输与每只狗的收购+疫苗支出', () => {
-    const next = createBatchFromPlan(DEFAULT_DATA, input, '10月3日一批', '2026-10-03')
-    expect(next.batches).toHaveLength(1)
-    expect(next.dogs).toHaveLength(8)
-    const batchId = next.batches[0].id
-    expect(batchTotalCost(next, batchId)).toBe(584000)
-    // 1 笔运输 + 8 笔收购 + 8 笔疫苗
-    expect(next.entries.filter(e => e.type === 'expense')).toHaveLength(17)
+// ——— 收货（Task 24）———
+//
+// 「收货」是全仓唯一的「建批次 + 建狗」实现：它**只写收购款这一类流水**。
+// 运输 / 疫苗 / 检疫 / 处理费一概不在这里写（那是 Task 25 的补账表，设计 D14 的
+// 「先做后补账」就落在这条线上）。所以这里刻意不再出现「17 笔」「8 笔 quarantine」
+// 那两条笔数口径 —— 它们已经搬去 Task 25 的 `addBatchCosts` 测试。
+
+/** 收货的默认入参。类型直接取自函数签名，签名加字段时这里会跟着报错。 */
+const receiveInput: Parameters<typeof addBatchWithDogs>[1] = {
+  name: '收狗 3 只 09:10',
+  date: '2026-10-03',
+  count: 3,
+  unitPriceFen: 60000,
+  channel: 'undecided',
+  source: '',
+  note: '',
+}
+
+/** 取出这次调用建出来的批次 id。没建出来就让测试炸掉，好过用 `!` 静音。 */
+function createdBatchId(result: { batchId: string | null }): string {
+  if (result.batchId === null) throw new Error('这次调用没有建出批次')
+  return result.batchId
+}
+
+/** 取出批次在库保本价。为 null 就让测试炸掉，好过用 `!` 静音。 */
+function floorPriceFen(data: AppData, batchId: string): number {
+  const value = batchSummary(data, batchId).floorPriceFen
+  if (value === null) throw new Error('这个批次算不出在库保本价')
+  return value
+}
+
+describe('addBatchWithDogs', () => {
+  it('★ 只数 0 —— 一个批次都不建，传入的 data 原样返回（同一引用）', () => {
+    const result = addBatchWithDogs(DEFAULT_DATA, { ...receiveInput, count: 0 })
+    expect(result.batchId).toBeNull()
+    expect(result.data).toBe(DEFAULT_DATA)
   })
 
-  it('检疫费按每只狗记一笔支出，且在建批次时就记上', () => {
-    const next = createBatchFromPlan(
-      DEFAULT_DATA, { ...input, quarantinePerDog: 5000 }, '10月3日一批', '2026-10-03',
-    )
-    const batchId = next.batches[0].id
-    // 原来的 5840 元 + 8 只 × 50 元
-    expect(batchTotalCost(next, batchId)).toBe(584000 + 8 * 5000)
-    expect(next.entries.filter(e => e.type === 'expense' && e.category === 'quarantine')).toHaveLength(8)
-    // 无害化处理费是「预估会死几只」的假设，不是已发生的支出，所以建批次时一笔都不记
-    expect(next.entries.filter(e => e.type === 'expense' && e.category === 'disposal')).toHaveLength(0)
+  it('负数只数同样什么都不建', () => {
+    const result = addBatchWithDogs(DEFAULT_DATA, { ...receiveInput, count: -3 })
+    expect(result.batchId).toBeNull()
+    expect(result.data).toBe(DEFAULT_DATA)
   })
 
-  it('每只狗的编号形如 批次名-序号，且初始状态为在库', () => {
-    const next = createBatchFromPlan(DEFAULT_DATA, input, '10月3日一批', '2026-10-03')
-    expect(next.dogs[0].code).toBe('10月3日一批-1')
-    expect(next.dogs.every(d => d.status === 'in_stock')).toBe(true)
-    expect(next.dogs.every(d => d.batchId === next.batches[0].id)).toBe(true)
+  it('只数不是有限数字（NaN / Infinity）时什么都不建', () => {
+    // `Math.floor(NaN)` 与 `Math.floor(Infinity)` 都不是「小于 1」的数，
+    // 光写 `count < 1` 会让这两种输入滑过去：NaN 建出一个没有狗的空批次，
+    // Infinity 直接死循环。
+    const nan = addBatchWithDogs(DEFAULT_DATA, { ...receiveInput, count: NaN })
+    expect(nan.batchId).toBeNull()
+    expect(nan.data).toBe(DEFAULT_DATA)
+    const infinity = addBatchWithDogs(DEFAULT_DATA, { ...receiveInput, count: Infinity })
+    expect(infinity.batchId).toBeNull()
+    expect(infinity.data).toBe(DEFAULT_DATA)
   })
 
-  it('新批次的在库保本价 = 总成本 ÷ 只数（此时还没死，所以低于决策台的保本价）', () => {
-    const next = createBatchFromPlan(DEFAULT_DATA, input, '10月3日一批', '2026-10-03')
-    const s = batchSummary(next, next.batches[0].id)
-    expect(formatMoney(s.floorPriceFen!)).toBe('¥730')
+  it('只数带小数时向下取整，不建出半只狗', () => {
+    const result = addBatchWithDogs(DEFAULT_DATA, { ...receiveInput, count: 2.7 })
+    expect(result.data.dogs).toHaveLength(2)
+  })
+
+  it('建 1 个批次与只数只狗，狗号形如 批次名-序号（序号从 1 开始）', () => {
+    const result = addBatchWithDogs(DEFAULT_DATA, receiveInput)
+    expect(result.data.batches).toHaveLength(1)
+    expect(createdBatchId(result)).toBe(result.data.batches[0].id)
+    expect(result.data.dogs.map(d => d.code)).toEqual([
+      '收狗 3 只 09:10-1', '收狗 3 只 09:10-2', '收狗 3 只 09:10-3',
+    ])
+    expect(result.data.dogs.every(d => d.status === 'in_stock')).toBe(true)
+    expect(result.data.dogs.every(d => d.batchId === result.data.batches[0].id)).toBe(true)
+    expect(result.data.batches[0].name).toBe('收狗 3 只 09:10')
+    expect(result.data.batches[0].date).toBe('2026-10-03')
+    expect(result.data.batches[0].status).toBe('active')
+  })
+
+  it('source 与 note 逐字存进新批次', () => {
+    const result = addBatchWithDogs(DEFAULT_DATA, {
+      ...receiveInput, source: '老李家', note: '来自预定单：老李家',
+    })
+    expect(result.data.batches[0].source).toBe('老李家')
+    expect(result.data.batches[0].note).toBe('来自预定单：老李家')
+  })
+
+  it('plannedChannel 按传入的渠道落库', () => {
+    expect(addBatchWithDogs(DEFAULT_DATA, { ...receiveInput, channel: 'undecided' })
+      .data.batches[0].plannedChannel).toBe('undecided')
+    expect(addBatchWithDogs(DEFAULT_DATA, { ...receiveInput, channel: 'pet_shop' })
+      .data.batches[0].plannedChannel).toBe('pet_shop')
+  })
+
+  it('★ 每只狗一笔收购款，从池子直付，amount 逐字等于传入的单价', () => {
+    const result = addBatchWithDogs(DEFAULT_DATA, receiveInput)
+    const batchId = createdBatchId(result)
+    const purchases = result.data.entries.filter(e => e.category === 'purchase')
+    expect(purchases).toHaveLength(3)
+    for (const entry of purchases) {
+      expect(entry.type).toBe('expense')
+      expect(entry.amount).toBe(60000)
+      expect(entry.paidBy).toBe('pool')
+      expect(entry.date).toBe('2026-10-03')
+      expect(entry.batchId).toBe(batchId)
+    }
+    // 三笔流水分别挂在三只**不同**的狗身上
+    expect(new Set(purchases.map(e => e.dogId)).size).toBe(3)
+    expect(batchTotalCost(result.data, batchId)).toBe(180000)
+  })
+
+  it('★ 单价 0 时一笔收购款都不写（不是写 0 元流水）', () => {
+    const result = addBatchWithDogs(DEFAULT_DATA, { ...receiveInput, unitPriceFen: 0 })
+    expect(result.data.entries).toHaveLength(0)
+    expect(batchTotalCost(result.data, createdBatchId(result))).toBe(0)
+    expect(result.data.dogs).toHaveLength(3)
+  })
+
+  it('★ 只写收购款这一类：运输 / 疫苗 / 检疫 / 处理费一笔都不在这里写', () => {
+    const result = addBatchWithDogs(DEFAULT_DATA, { ...receiveInput, count: 8 })
+    const expenses = result.data.entries.filter(e => e.type === 'expense')
+    expect(expenses).toHaveLength(8)
+    expect(expenses.every(e => e.category === 'purchase')).toBe(true)
+    // 那四项只是「算」页保本价的输入，收货这一刻一分钱都还没花出去。
+    for (const category of ['transport', 'medical', 'quarantine', 'disposal']) {
+      expect(result.data.entries.filter(e => e.category === category)).toHaveLength(0)
+    }
+  })
+
+  it('新买回来的狗检疫台账全部为空，绝不预填今天', () => {
+    const result = addBatchWithDogs(DEFAULT_DATA, receiveInput)
+    for (const dog of result.data.dogs) {
+      expect(dog.rabiesVaccinatedOn).toBeNull()
+      expect(dog.antibodyTestedOn).toBeNull()
+      expect(dog.antibodyReportNo).toBe('')
+      expect(dog.quarantineCertNo).toBe('')
+      expect(dog.quarantineCertIssuedOn).toBeNull()
+      expect(dog.quarantineCertValidUntil).toBeNull()
+    }
   })
 
   it('不修改传入的 data（纯函数）', () => {
     const before = JSON.stringify(DEFAULT_DATA)
-    createBatchFromPlan(DEFAULT_DATA, input, 'X', '2026-10-03')
+    addBatchWithDogs(DEFAULT_DATA, receiveInput)
     expect(JSON.stringify(DEFAULT_DATA)).toBe(before)
   })
 
-  it('新批次的 plan 去向默认为 undecided', () => {
-    const next = createBatchFromPlan(DEFAULT_DATA, input, '10月3日一批', '2026-10-03')
-    expect(next.batches[0].plannedChannel).toBe('undecided')
+  it('已有批次不被动过，新批次追加在其后', () => {
+    const first = addBatchWithDogs(DEFAULT_DATA, { ...receiveInput, name: '一批', count: 3 })
+    const firstBatch = first.data.batches[0]
+    const second = addBatchWithDogs(first.data, { ...receiveInput, name: '二批', count: 2 })
+    expect(second.data.batches[0]).toBe(firstBatch)
+    expect(second.data.batches).toHaveLength(2)
+    expect(second.data.batches[1].name).toBe('二批')
+    expect(second.data.dogs).toHaveLength(5)
   })
 
-  it('传入 plan 去向时按传入值落库', () => {
-    const next = createBatchFromPlan(DEFAULT_DATA, input, '10月3日一批', '2026-10-03', 'pet_shop')
-    expect(next.batches[0].plannedChannel).toBe('pet_shop')
+  it('新批次的在库保本价 = 已写进去的收购款 ÷ 只数', () => {
+    const result = addBatchWithDogs(DEFAULT_DATA, { ...receiveInput, count: 8 })
+    expect(formatMoney(floorPriceFen(result.data, createdBatchId(result)))).toBe('¥600')
   })
+})
 
-  it('新买回来的狗检疫台账全部为空，绝不预填今天', () => {
-    const next = createBatchFromPlan(DEFAULT_DATA, input, '10月3日一批', '2026-10-03')
-    for (const d of next.dogs) {
-      expect(d.rabiesVaccinatedOn).toBeNull()
-      expect(d.antibodyTestedOn).toBeNull()
-      expect(d.antibodyReportNo).toBe('')
-      expect(d.quarantineCertNo).toBe('')
-      expect(d.quarantineCertIssuedOn).toBeNull()
-      expect(d.quarantineCertValidUntil).toBeNull()
-    }
-  })
-
-  it('已建好的批次不被动过，新批次追加在其后', () => {
-    const first = createBatchFromPlan(DEFAULT_DATA, input, '一批', '2026-10-03')
-    const firstBatch = first.batches[0]
-    const second = createBatchFromPlan(first, { ...input, n: 2 }, '二批', '2026-10-05')
-    expect(second.batches[0]).toBe(firstBatch)
-    expect(second.batches).toHaveLength(2)
-    expect(second.batches[1].name).toBe('二批')
-    expect(second.dogs).toHaveLength(10)
-  })
-
-  it('运输费为 0 时不记运输支出', () => {
-    const next = createBatchFromPlan(DEFAULT_DATA, { ...input, freight: 0 }, '10月3日一批', '2026-10-03')
-    expect(next.entries.filter(e => e.category === 'transport')).toHaveLength(0)
-    expect(batchTotalCost(next, next.batches[0].id)).toBe(544000)
-  })
-
-  it('只数 0 时建出一个没有狗的空批次', () => {
-    const next = createBatchFromPlan(DEFAULT_DATA, { ...input, n: 0 }, '空批次', '2026-10-03')
+describe('receiveBatch', () => {
+  it('建批次与狗、只记收购款，来源与备注都是空串', () => {
+    const next = receiveBatch(DEFAULT_DATA, {
+      name: '收狗 2 只 14:07', date: '2026-10-03', count: 2, unitPriceFen: 40000, channel: 'pet_shop',
+    })
     expect(next.batches).toHaveLength(1)
-    expect(next.dogs).toHaveLength(0)
-    expect(next.entries.filter(e => e.type === 'expense')).toHaveLength(1)  // 只有运输
+    expect(next.batches[0].name).toBe('收狗 2 只 14:07')
+    expect(next.batches[0].source).toBe('')
+    expect(next.batches[0].note).toBe('')
+    expect(next.batches[0].plannedChannel).toBe('pet_shop')
+    expect(next.dogs.map(d => d.code)).toEqual(['收狗 2 只 14:07-1', '收狗 2 只 14:07-2'])
+    expect(next.entries.filter(e => e.category === 'purchase')).toHaveLength(2)
+    expect(next.entries.filter(e => e.category !== 'purchase')).toHaveLength(0)
+  })
+
+  it('只数 0 时原样返回同一引用，什么都不建', () => {
+    const next = receiveBatch(DEFAULT_DATA, {
+      name: '空批次', date: '2026-10-03', count: 0, unitPriceFen: 40000, channel: 'undecided',
+    })
+    expect(next).toBe(DEFAULT_DATA)
   })
 })
