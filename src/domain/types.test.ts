@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { DEFAULT_SETTINGS, DEFAULT_DATA, BUILTIN_COST_ITEMS, SALES_CHANNELS, newId } from './types'
+import type { PreOrder } from './types'
 
 describe('默认设置', () => {
   it('分成比例之和为 1', () => {
@@ -38,6 +39,46 @@ describe('默认设置', () => {
 
   it('newId 每次返回不同的值', () => {
     expect(newId()).not.toBe(newId())
+  })
+
+  it('预定单提醒提前天数的默认为 3', () => {
+    expect(DEFAULT_SETTINGS.preOrderLeadDays).toBe(3)
+  })
+
+  it('默认数据里有空的预定单集合', () => {
+    expect(DEFAULT_DATA.preOrders).toEqual([])
+  })
+
+  // 逐字写全 12 个字段：字段名或类型以后被改动时这条会直接报错。
+  it('PreOrder 的字面量逐字通过类型与取值检查', () => {
+    const po: PreOrder = {
+      id: 'p1',
+      sellerName: '张大爷',
+      sellerContact: '13800000000',
+      expectedCount: 3,
+      collectDate: '2026-10-05',
+      traits: '两只黄的一只黑的',
+      note: '说好周日上午去',
+      createdAt: '2026-10-03T08:30:00.000Z',
+      status: 'reserved',
+      receivedCount: 0,
+      receivedBatchId: null,
+      cancelReason: '',
+    }
+    expect(po).toEqual({
+      id: 'p1',
+      sellerName: '张大爷',
+      sellerContact: '13800000000',
+      expectedCount: 3,
+      collectDate: '2026-10-05',
+      traits: '两只黄的一只黑的',
+      note: '说好周日上午去',
+      createdAt: '2026-10-03T08:30:00.000Z',
+      status: 'reserved',
+      receivedCount: 0,
+      receivedBatchId: null,
+      cancelReason: '',
+    })
   })
 })
 

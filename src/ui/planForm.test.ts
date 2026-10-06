@@ -20,6 +20,7 @@ const settings: Settings = {
   disposalPerDog: 0,
   rabiesWaitDays: 21,
   quarantineLeadDays: 3,
+  preOrderLeadDays: 3,
   lastBackupAt: null,
 }
 

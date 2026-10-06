@@ -44,5 +44,9 @@ export function importBackup(json: string): AppData {
     batches: data.batches,
     dogs: data.dogs,
     entries: data.entries,
+    // 这里**不能**写 []：exportBackup 是原样序列化整个 data，写死空数组会造成
+    // 「导出时带着预定单、导入回来就没了」，而只测旧格式导入的用例照样全绿，
+    // 丢数据这件事要等用户真去导一次才发现。
+    preOrders: data.preOrders ?? [],
   }
 }

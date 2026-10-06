@@ -4,6 +4,7 @@ import type { Storage } from '../storage/types'
 import { indexedDbStorage } from '../storage/indexeddb'
 import { createMemoryStorage } from '../storage/memory'
 import { DEFAULT_DATA } from '../domain/types'
+import type { AppData } from '../domain/types'
 
 /** 一个永远失败的存储：模拟浏览器不给 IndexedDB，或配额已满。 */
 const failingStorage: Storage = {
@@ -21,6 +22,23 @@ describe('loadPersistedData', () => {
 
   it('存储里没有数据时返回 null', async () => {
     expect(await loadPersistedData(createMemoryStorage())).toBeNull()
+  })
+
+  // 用户手机上已有的数据是在 preOrders 与 preOrderLeadDays 出现之前写的，
+  // 读回来必须照常能用，而不是缺字段让界面炸掉。
+  it('读回缺 preOrders 与 preOrderLeadDays 的老数据时补齐', async () => {
+    const storage = createMemoryStorage()
+    const legacy = {
+      version: 1,
+      settings: { partners: [{ id: 'p1', name: '我', shareRatio: 1 }] },
+      batches: [], dogs: [], entries: [],
+    } as unknown as AppData
+    await storage.save(legacy)
+
+    const loaded = await loadPersistedData(storage)
+    expect(loaded?.preOrders).toEqual([])
+    expect(loaded?.settings.preOrderLeadDays).toBe(3)
+    expect(loaded?.settings.partners).toEqual([{ id: 'p1', name: '我', shareRatio: 1 }])
   })
 
   // 这是整个应用骨架最容易挂掉的一条路径：启动时 storage.load() 一旦 reject，

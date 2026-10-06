@@ -1,4 +1,5 @@
 import type { AppData } from '../domain/types'
+import { normalizeAppData } from '../domain/normalize'
 import type { Storage } from '../storage/types'
 
 /**
@@ -8,10 +9,13 @@ import type { Storage } from '../storage/types'
  * 会**异步** reject（`ReferenceError: indexedDB is not defined`）。如果把这个 rejection
  * 直接交给界面，启动路径上的「ready」标志就永远不会翻转，界面会永远停在「正在载入…」
  * —— 也就是一块白屏。所以在这里把失败翻译成「没有已保存的数据」，让界面照常起来。
+ *
+ * 读回来的对象还会过一遍 `normalizeAppData` 补齐老数据缺的字段。
  */
 export async function loadPersistedData(storage: Storage): Promise<AppData | null> {
   try {
-    return await storage.load()
+    const raw = await storage.load()
+    return raw === null ? null : normalizeAppData(raw)
   } catch {
     return null
   }

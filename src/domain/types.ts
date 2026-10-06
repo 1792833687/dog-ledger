@@ -81,6 +81,11 @@ export interface Settings {
   rabiesWaitDays: number
   /** 申报检疫需提前几天。默认 3 ——《动物检疫管理办法》第八条第二款 +《犬产地检疫规程》4.1。 */
   quarantineLeadDays: number
+  /**
+   * 离约定去收的日子还有几天就开始提醒。
+   * 默认 3 只是一开始的猜测，不是法定天数，设置里可以按自己的跑腿习惯改。
+   */
+  preOrderLeadDays: number
   /** 上次备份时间，ISO datetime；从未备份为 null */
   lastBackupAt: string | null
 }
@@ -141,12 +146,44 @@ export interface LedgerEntry {
   note: string
 }
 
+export type PreOrderStatus = 'reserved' | 'received' | 'cancelled'
+
+/**
+ * 预定单（口头约定去某家收几只狗）。
+ * 记的就是「跟谁收、收几只、哪天去」这三样，其余都是备注。
+ */
+export interface PreOrder {
+  id: string
+  /** 卖家称呼。与 expectedCount、collectDate 一起是记一张预定单至少要有的三样 */
+  sellerName: string
+  /** 电话或微信，可留空 */
+  sellerContact: string
+  /** 约定去收的只数。与 sellerName、collectDate 一起是记一张预定单至少要有的三样 */
+  expectedCount: number
+  /** 约定去收的日子 YYYY-MM-DD。与 sellerName、expectedCount 一起是记一张预定单至少要有的三样 */
+  collectDate: string
+  /** 卖家说的特征（花色、大小、公母），用来到了现场对号 */
+  traits: string
+  note: string
+  /** 建单时间，ISO datetime */
+  createdAt: string
+  /** 只能由「收货」与「取消」两个动作写入，界面不给直接编辑 */
+  status: PreOrderStatus
+  /** 实际收回来几只。只能由「收货」动作写入，界面不给直接编辑 */
+  receivedCount: number
+  /** 收货建出来的批次 id；没收货为 null。只能由「收货」动作写入，界面不给直接编辑 */
+  receivedBatchId: string | null
+  /** 取消原因，取消时填 */
+  cancelReason: string
+}
+
 export interface AppData {
   version: 1
   settings: Settings
   batches: Batch[]
   dogs: Dog[]
   entries: LedgerEntry[]
+  preOrders: PreOrder[]
 }
 
 export const BUILTIN_COST_ITEMS: CostItemDef[] = [
@@ -182,6 +219,8 @@ export const DEFAULT_SETTINGS: Settings = {
   rabiesWaitDays: 21,
   // 3 天是法定的：《动物检疫管理办法》第八条第二款 +《犬产地检疫规程》4.1。
   quarantineLeadDays: 3,
+  // 3 天只是一开始的猜测：既不是法定天数，也没问过用户的跑腿习惯，设置里可改。
+  preOrderLeadDays: 3,
   lastBackupAt: null,
 }
 
@@ -191,6 +230,7 @@ export const DEFAULT_DATA: AppData = {
   batches: [],
   dogs: [],
   entries: [],
+  preOrders: [],
 }
 
 export function newId(): string {
