@@ -9,6 +9,7 @@ import {
   parseExpectedCount,
   preOrderInput,
   preOrderPatch,
+  stageText,
 } from './preOrderForm'
 
 /** 一张填得没问题的草稿：下面每个用例只改它一个字段。 */
@@ -205,5 +206,44 @@ describe('draftFromOrder', () => {
       traits: '两只黄的，三只黑的',
       note: '别迟到',
     })
+  })
+})
+
+describe('stageText', () => {
+  it('黄了的单子只写「黄了」', () => {
+    expect(stageText(order, 'cancelled', '2026-10-04')).toBe('黄了')
+  })
+
+  it('已收货的单子只写「已收货」', () => {
+    expect(stageText(order, 'received', '2026-10-04')).toBe('已收货')
+  })
+
+  it('还没到日子的单子写「还没到日子」', () => {
+    expect(stageText(order, 'upcoming', '2026-10-04')).toBe('还没到日子')
+  })
+
+  // 过期与快到期要能一眼分出急缓：两张卡如果都写「该去收了」，
+  // 「约的是上周三」和「约的是后天」在界面上长得一模一样。
+  it('过期了写「已经过期 N 天」', () => {
+    const late = { ...order, collectDate: '2026-10-01' }
+    expect(stageText(late, 'overdue', '2026-10-04')).toBe('已经过期 3 天')
+  })
+
+  it('快到期写「还有 N 天去收」', () => {
+    const soon = { ...order, collectDate: '2026-10-07' }
+    expect(stageText(soon, 'due_soon', '2026-10-04')).toBe('还有 3 天去收')
+  })
+
+  it('就是今天的话写「今天去收」，不写「还有 0 天」', () => {
+    const todayOrder = { ...order, collectDate: '2026-10-04' }
+    expect(stageText(todayOrder, 'due_soon', '2026-10-04')).toBe('今天去收')
+  })
+
+  // 手写坏数据（导入进来的空日期）不能让卡片上出现「还有 NaN 天」。
+  it('日期是坏串时回落成「该去收了」，不吐 NaN', () => {
+    const broken = { ...order, collectDate: '' }
+    expect(stageText(broken, 'overdue', '2026-10-04')).toBe('该去收了')
+    expect(stageText(broken, 'due_soon', '2026-10-04')).toBe('该去收了')
+    expect(stageText(broken, 'upcoming', '2026-10-04')).toBe('还没到日子')
   })
 })

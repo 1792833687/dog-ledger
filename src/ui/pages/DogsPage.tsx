@@ -15,7 +15,9 @@ import { ConfirmDialog } from '../components/ConfirmDialog'
 import { todayLocalIso, localTimeHm } from '../planForm'
 import { isOnHand, refundedCurrentSale } from '../dogLedger'
 import { channelOptions, findChannel, parseAliveInput } from '../channelView'
-import { canSubmitPreOrder, draftFromOrder, draftIssue, emptyPreOrderDraft, preOrderInput, preOrderPatch } from '../preOrderForm'
+import {
+  canSubmitPreOrder, draftFromOrder, draftIssue, emptyPreOrderDraft, preOrderInput, preOrderPatch, stageText,
+} from '../preOrderForm'
 import type { PreOrderDraft } from '../preOrderForm'
 
 /**
@@ -38,18 +40,11 @@ const STATUS_LABEL: Record<string, string> = {
 }
 
 /**
- * 预定单的四种说法（设计 §3.9）。`due_soon` 与 `overdue` 说同一句话「该去收了」：
- * 对要出门收狗的两个人来说，「还有两天」和「已经过了两天」要做的事是同一件 ——
- * 打电话、出门、把狗拉回来；分成两句反而要多想一秒。区别只体现在颜色上。
+ * 阶段标签的**颜色**（四个状态一张表）。文案不在这里 —— `due_soon` 与 `overdue`
+ * 要写出「还有 N 天」/「已经过期 N 天」，一张常量表表达不了，改由
+ * `stageText(order, stage, today)` 现算（`../preOrderForm`）。
+ * 颜色上两者仍然同一档：对要出门收狗的两个人来说，急的事是同一件。
  */
-const PRE_ORDER_STAGE_LABEL: Record<PreOrderStage, string> = {
-  upcoming: '还没到日子',
-  due_soon: '该去收了',
-  overdue: '该去收了',
-  received: '已收货',
-  cancelled: '黄了',
-}
-
 const PRE_ORDER_STAGE_CLASS: Record<PreOrderStage, string> = {
   upcoming: 'text-gray-400',
   due_soon: 'text-red-500',
@@ -445,7 +440,7 @@ export function DogsPage() {
                       <div className="flex items-baseline justify-between gap-2">
                         <span className="font-semibold">{order.sellerName}</span>
                         <span className={`shrink-0 text-xs font-semibold ${PRE_ORDER_STAGE_CLASS[stage]}`}>
-                          {PRE_ORDER_STAGE_LABEL[stage]}
+                          {stageText(order, stage, today)}
                         </span>
                       </div>
                       <div className="mt-1 text-xs text-gray-500">
@@ -487,6 +482,22 @@ export function DogsPage() {
                             onClick={() => openCancelPreOrder(order.id)}
                           >
                             黄了
+                          </button>
+                        </div>
+                      )}
+
+                      {/* 「预定中」也能直接删掉（设计 §3.9：记错了可以整条删掉，例外只有已收货）。
+                          单独放第二行、右对齐：第一行那三个是「去办这件事」的动作，
+                          删掉是「这张单子记错了」——混在一行里，375px 下四个按钮会挤到一起，
+                          也容易点错。样式与 `cancelled` 卡的「删掉」逐字相同，同一个动作长得一样。 */}
+                      {order.status === 'reserved' && (
+                        <div className="mt-1 flex justify-end">
+                          <button
+                            type="button"
+                            className="rounded-lg bg-gray-100 px-3 py-1.5 text-xs font-semibold text-red-500"
+                            onClick={() => openDeletePreOrder(order.id)}
+                          >
+                            删掉
                           </button>
                         </div>
                       )}
@@ -643,7 +654,10 @@ export function DogsPage() {
         <ConfirmDialog
           open={deletingId !== null}
           title="删掉这张预定单？"
-          message="删了就没有撤销，这张单子以后也查不回来。预定单删掉不影响任何批次 —— 它是黄了的单子，没收到货，没跟任何一批挂上钩。"
+          // 预定中与「黄了」共用这一个弹窗（同一个动作长得一样）。两句话都不能少：
+          // 「删了就没有撤销」是叫人想一下，「删不掉已经记过的账」是叫人放心按下它
+          // —— 收货过的单子本来就没有这个按钮，但用户不知道这条规矩。
+          message="删了就没有撤销，这张单子以后也查不回来。预定单删掉不影响任何批次，也删不掉已经记过的账。"
           confirmLabel="删掉"
           onConfirm={confirmDeletePreOrder}
           onClose={closePreOrderPanels}

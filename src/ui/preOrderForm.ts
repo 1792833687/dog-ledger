@@ -1,5 +1,7 @@
 import type { AddPreOrderInput } from '../domain/actions'
+import type { PreOrderStage } from '../domain/preOrders'
 import type { PreOrder } from '../domain/types'
+import { daysBetween } from '../domain/quarantine'
 import { parseAliveInput } from './channelView'
 
 /**
@@ -113,4 +115,36 @@ export function preOrderInput(draft: PreOrderDraft, createdAt: string): AddPreOr
   const patch = preOrderPatch(draft)
   if (patch === null) return null
   return { ...patch, createdAt }
+}
+
+/**
+ * 卡片上那个阶段标签写什么字。
+ *
+ * `due_soon` 与 `overdue` 属于**同一个分组**（都挂「该去收了」那条提醒），但卡片上必须写出
+ * 差多少天：两者都写「该去收了」的话，「约的是上周三」和「约的是后天」长得一模一样，
+ * 用户得自己读日期才知道先打哪一个电话。
+ *
+ * 日期串可能是手写进去的坏数据（导入、手改备份），那时 `daysBetween` 返回 `NaN`；
+ * 这里用 `Number.isFinite` 兜成「该去收了」，**不许**让卡片上出现「还有 NaN 天」。
+ * 也不去复制 `preOrders.ts` 里那条没导出的日期正则 —— 两份正则迟早走岔。
+ */
+export function stageText(order: PreOrder, stage: PreOrderStage, today: string): string {
+  switch (stage) {
+    case 'cancelled':
+      return '黄了'
+    case 'received':
+      return '已收货'
+    case 'upcoming':
+      return '还没到日子'
+    case 'overdue': {
+      const days = daysBetween(order.collectDate, today)
+      return Number.isFinite(days) ? `已经过期 ${days} 天` : '该去收了'
+    }
+    case 'due_soon': {
+      const days = daysBetween(today, order.collectDate)
+      if (!Number.isFinite(days)) return '该去收了'
+      // 今天就是约好的日子：写「还有 0 天去收」读起来像出了什么错。
+      return days === 0 ? '今天去收' : `还有 ${days} 天去收`
+    }
+  }
 }
