@@ -1,11 +1,11 @@
 import { describe, it, expect } from 'vitest'
 import { DEFAULT_DATA, BUILTIN_COST_ITEMS } from './types'
-import type { AppData, Dog, PreOrder } from './types'
+import type { AppData, Dog, LedgerEntry, PreOrder } from './types'
 import {
   setDogStatus, sellDog, markDogDead, addExpense, createBatch,
   addInjection, addIncome, addReimbursement, addDistribution, setDogQuarantine,
   updateSettings, renamePartner, setPartnerRatio, addCostItem, setBatchChannel,
-  renameBatch,
+  renameBatch, updateEntry, deleteEntry,
 } from './actions'
 import { batchSummary, dogIncome, dogOwnCost, batchTotalCost, dogProfitFen } from './costing'
 import { poolBalance, advanceBalance, contributedCapital, distributedTo } from './ledger'
@@ -1397,5 +1397,293 @@ describe('receivePreOrder', () => {
     receivePreOrder(data, id, receive)
     expect(JSON.stringify(data)).toBe(before)
     expect(at(data, 0).status).toBe('reserved')
+  })
+})
+
+// ——— 流水纠错（Task 26）———
+//
+// 这是第一次让 `entries` 不再只能追加：用户可以改一笔、删一笔。
+// 连带规则只有一条 —— 删掉一只狗**最后一条**收入时把它放回在库，且只在它当前是
+// `sold` / `returned` 时 —— 但这条规则有四个分支，每个都得有测试钉住。
+
+/** 取第 `index` 笔流水。越界就让测试炸掉，好过用 `!` 静音。 */
+function entryAt(data: AppData, index: number): LedgerEntry {
+  const entry = data.entries[index]
+  if (!entry) throw new Error(`第 ${index} 笔流水不存在`)
+  return entry
+}
+
+function entryById(data: AppData, id: string): LedgerEntry {
+  const entry = data.entries.find(e => e.id === id)
+  if (!entry) throw new Error(`流水 ${id} 不存在`)
+  return entry
+}
+
+function dogById(data: AppData, id: string): Dog {
+  const dog = data.dogs.find(d => d.id === id)
+  if (!dog) throw new Error(`狗 ${id} 不存在`)
+  return dog
+}
+
+/** 某只狗**最早**那条销售收入（`sellDog` 写的就是它）。 */
+function firstSaleEntryId(data: AppData, dogId: string): string {
+  const entry = data.entries.find(e => e.type === 'income' && e.dogId === dogId)
+  if (!entry) throw new Error(`狗 ${dogId} 没有卖出记录`)
+  return entry.id
+}
+
+/** 某只狗**最晚**那条销售收入（同一只狗卖两次时用来认第二次）。 */
+function lastSaleEntryId(data: AppData, dogId: string): string {
+  let found: LedgerEntry | undefined
+  data.entries.forEach(e => { if (e.type === 'income' && e.dogId === dogId) found = e })
+  if (!found) throw new Error(`狗 ${dogId} 没有卖出记录`)
+  return found.id
+}
+
+/** 退掉这一次成交：记一笔售后退款支出，并把狗放回在册（界面上「退款」的两个动作）。 */
+function refundCurrentSale(data: AppData, dogId: string, amount: number, date: string): AppData {
+  const dog = dogById(data, dogId)
+  return setDogStatus(addExpense(data, {
+    batchId: dog.batchId, dogId, category: 'aftercare_refund',
+    amount, paidBy: 'pool', date, note: '',
+  }), dogId, 'returned')
+}
+
+describe('updateEntry', () => {
+  it('改金额：新值照写', () => {
+    const data = seed()
+    const next = updateEntry(data, entryAt(data, 0).id, { amount: 12345 })
+    expect(entryAt(next, 0).amount).toBe(12345)
+  })
+
+  it('金额 0 合法（记一笔 0 元的账无害），负数夹到 0', () => {
+    const data = seed()
+    const id = entryAt(data, 0).id
+    expect(entryAt(updateEntry(data, id, { amount: 0 }), 0).amount).toBe(0)
+    expect(entryAt(updateEntry(data, id, { amount: -500 }), 0).amount).toBe(0)
+    expect(entryAt(updateEntry(data, id, { amount: -0.4 }), 0).amount).toBe(0)
+  })
+
+  it('金额带小数时四舍五入到分（与 addExpense / sellDog 同一口径）', () => {
+    const data = seed()
+    const next = updateEntry(data, entryAt(data, 0).id, { amount: 1234.6 })
+    expect(entryAt(next, 0).amount).toBe(1235)
+  })
+
+  it('★ 改完之后派生值跟着变：池子余额与批次成本都是现算的', () => {
+    const data = seed()
+    expect(poolBalance(data)).toBe(-40000)
+    const next = updateEntry(data, entryAt(data, 0).id, { amount: 10000 })
+    expect(poolBalance(next)).toBe(-10000)
+    expect(batchTotalCost(next, data.batches[0].id)).toBe(10000)
+  })
+
+  it('改日期、备注与垫付人', () => {
+    const data = seed()
+    const next = updateEntry(data, entryAt(data, 0).id, {
+      date: '2026-11-01', note: '油费记错了', paidBy: 'p1',
+    })
+    expect(entryAt(next, 0)).toMatchObject({
+      date: '2026-11-01', note: '油费记错了', paidBy: 'p1',
+    })
+  })
+
+  it('改支出的类别生效', () => {
+    const data = seed()
+    const next = updateEntry(data, entryAt(data, 0).id, { category: 'medical' })
+    expect(entryAt(next, 0).category).toBe('medical')
+  })
+
+  it('★ 收入带 category 被忽略：仍然是 sale（否则一笔收入会凭空变成一笔支出）', () => {
+    const data = sellDog(sellSeed(), 'd1', 120000, '2026-10-05')
+    const id = firstSaleEntryId(data, 'd1')
+    const next = updateEntry(data, id, { category: 'transport' })
+    expect(entryById(next, id).category).toBe('sale')
+    expect(entryById(next, id).type).toBe('income')
+  })
+
+  it('★ 转账类流水带 category 也被忽略：注资仍然是 transfer', () => {
+    const withInjection = addInjection(seed(), 'p1', 100000, '2026-10-05', '')
+    const id = entryAt(withInjection, withInjection.entries.length - 1).id
+    const next = updateEntry(withInjection, id, { category: 'dogfood' })
+    expect(entryById(next, id).category).toBe('transfer')
+    expect(entryById(next, id).type).toBe('injection')
+  })
+
+  it('★ type / id / batchId / dogId 改不动，逐字不变', () => {
+    const data = sellDog(sellSeed(), 'd1', 120000, '2026-10-05')
+    const id = firstSaleEntryId(data, 'd1')
+    const before = entryById(data, id)
+    const next = updateEntry(data, id, {
+      amount: 1, date: '2026-01-01', note: 'x', paidBy: 'p1', category: 'dogfood',
+    })
+    const after = entryById(next, id)
+    expect(after.type).toBe(before.type)
+    expect(after.id).toBe(before.id)
+    expect(after.batchId).toBe(before.batchId)
+    expect(after.dogId).toBe(before.dogId)
+  })
+
+  it('★ 没有任何字段实际变化 → 返回同一引用（什么都没改就点保存不该写库）', () => {
+    const data = seed()
+    const entry = entryAt(data, 0)
+    expect(updateEntry(data, entry.id, {})).toBe(data)
+    expect(updateEntry(data, entry.id, {
+      amount: entry.amount, date: entry.date, note: entry.note,
+      paidBy: entry.paidBy, category: entry.category,
+    })).toBe(data)
+  })
+
+  it('income 上带与现值相同的 category 也算没变化 → 同一引用', () => {
+    const data = sellDog(sellSeed(), 'd1', 120000, '2026-10-05')
+    expect(updateEntry(data, firstSaleEntryId(data, 'd1'), { category: 'sale' })).toBe(data)
+  })
+
+  it('找不到这笔流水 → 返回同一引用', () => {
+    const data = seed()
+    expect(updateEntry(data, '不存在的流水', { amount: 1 })).toBe(data)
+  })
+
+  it('只改中选的那一笔，其余流水连引用都不换、顺序也不变', () => {
+    const data = sellSeed()
+    const target = 2
+    const next = updateEntry(data, entryAt(data, target).id, { amount: 1 })
+    expect(next.entries).toHaveLength(data.entries.length)
+    data.entries.forEach((e, i) => {
+      if (i === target) expect(next.entries[i]).not.toBe(e)
+      else expect(next.entries[i]).toBe(e)
+    })
+  })
+
+  it('不修改传入的 data 本身', () => {
+    const data = sellSeed()
+    const snapshot = structuredClone(data)
+    updateEntry(data, entryAt(data, 0).id, { amount: 1, note: 'x' })
+    expect(data).toEqual(snapshot)
+  })
+})
+
+describe('deleteEntry', () => {
+  it('找不到这笔流水 → 返回同一引用', () => {
+    const data = seed()
+    expect(deleteEntry(data, '不存在的流水')).toBe(data)
+  })
+
+  it('物理删掉那一笔，其余流水连引用都不换、顺序不变', () => {
+    const data = sellSeed()
+    const target = 3
+    const next = deleteEntry(data, entryAt(data, target).id)
+    expect(next.entries).toHaveLength(data.entries.length - 1)
+    expect(next.entries.map(e => e.id)).toEqual(
+      data.entries.filter((_, i) => i !== target).map(e => e.id),
+    )
+    // 被删位置后面那笔整体前移，连对象引用都没换
+    expect(next.entries[target]).toBe(data.entries[target + 1])
+  })
+
+  it('★ 删掉一只狗唯一那条销售收入 → 狗回到在库，别的狗一个字节都不动', () => {
+    let data = sellSeed()
+    data = sellDog(data, 'd1', 120000, '2026-10-05')
+    data = sellDog(data, 'd2', 110000, '2026-10-06')
+    const next = deleteEntry(data, firstSaleEntryId(data, 'd1'))
+    expect(dogById(next, 'd1').status).toBe('in_stock')
+    expect(dogById(next, 'd2').status).toBe('sold')
+    // 别的狗连对象引用都不换
+    expect(dogById(next, 'd2')).toBe(dogById(data, 'd2'))
+    expect(dogById(next, 'd3')).toBe(dogById(data, 'd3'))
+  })
+
+  it('★ 狗已经是 dead 时删它那条（最后的）销售收入 → 状态仍是 dead，其余数据一个字节不动', () => {
+    let data = sellSeed()
+    data = sellDog(data, 'd1', 120000, '2026-10-05')            // 卖出去
+    data = refundCurrentSale(data, 'd1', 120000, '2026-10-06')  // 退款把狗退回
+    data = markDogDead(data, 'd1')                              // 又标了死亡
+    expect(dogById(data, 'd1').status).toBe('dead')
+
+    const next = deleteEntry(data, firstSaleEntryId(data, 'd1'))
+    // 狗死了是另一个事实：无害化处理费已经按它记过、死亡率也把它算进去了，
+    // 删一笔收入不能把它复活成在库。
+    expect(dogById(next, 'd1').status).toBe('dead')
+    // 没有任何狗要改 → dogs 数组连引用都不换，其余数据也一个字节不动
+    expect(next.dogs).toBe(data.dogs)
+    expect(dogById(next, 'd1')).toBe(dogById(data, 'd1'))
+    expect(next.batches).toBe(data.batches)
+    expect(next.settings).toBe(data.settings)
+    expect(next.entries).toHaveLength(data.entries.length - 1)
+  })
+
+  it('★ 卖 → 退款退回 → 又卖一次之后删掉更早那条收入 → 狗状态不动', () => {
+    let data = sellSeed()
+    data = sellDog(data, 'd1', 120000, '2026-10-05')
+    data = refundCurrentSale(data, 'd1', 120000, '2026-10-06')
+    data = sellDog(data, 'd1', 110000, '2026-10-07')
+    expect(dogById(data, 'd1').status).toBe('sold')
+
+    const earlier = firstSaleEntryId(data, 'd1')
+    const later = lastSaleEntryId(data, 'd1')
+    expect(earlier).not.toBe(later)
+
+    const next = deleteEntry(data, earlier)
+    // 最后一条收入还在账上，狗还是在外面 —— 撤掉一笔历史不改变这个事实
+    expect(dogById(next, 'd1').status).toBe('sold')
+    expect(next.dogs).toBe(data.dogs)
+    expect(entryById(next, later)).toBe(entryById(data, later))
+  })
+
+  it('删退款流水 → 狗状态不变（退款不是「狗在哪」的决定者）', () => {
+    let data = sellSeed()
+    data = sellDog(data, 'd1', 120000, '2026-10-05')
+    data = refundCurrentSale(data, 'd1', 120000, '2026-10-06')
+    const refundEntry = data.entries.find(e => e.category === 'aftercare_refund')
+    if (!refundEntry) throw new Error('没有退款流水')
+
+    const next = deleteEntry(data, refundEntry.id)
+    expect(dogById(next, 'd1').status).toBe('returned')
+    expect(next.dogs).toBe(data.dogs)
+  })
+
+  it('删注资 / 分红 / 报销 / 支出 / 不挂狗的散收入 → 任何狗状态都不变', () => {
+    let data = sellDog(sellSeed(), 'd1', 120000, '2026-10-05')
+    const statuses = data.dogs.map(d => d.status)
+    data = addInjection(data, 'p1', 100000, '2026-10-05', '')
+    data = addDistribution(data, 'p1', 5000, '2026-10-05')
+    data = addReimbursement(data, 'p1', 3000, '2026-10-05')
+    data = addIncome(data, 2000, '2026-10-05', '卖笼子')
+
+    const targets = [
+      data.entries.find(e => e.category === 'medical'),
+      data.entries.find(e => e.type === 'injection'),
+      data.entries.find(e => e.type === 'distribution'),
+      data.entries.find(e => e.type === 'reimbursement'),
+      data.entries.find(e => e.type === 'income' && e.dogId === null),
+    ].map(e => {
+      if (!e) throw new Error('少了要删的流水')
+      return e.id
+    })
+    expect(targets).toHaveLength(5)
+
+    for (const id of targets) {
+      const next = deleteEntry(data, id)
+      expect(next.dogs.map(d => d.status)).toEqual(statuses)
+      expect(next.dogs).toBe(data.dogs)
+    }
+  })
+
+  it('狗已经被手动改回在库时，删它那条收入 → 状态仍是 in_stock，狗对象连引用都不换', () => {
+    // 纠错路径：售出记错了，用户先在「狗」页把它手动改回在库（`setDogStatus` 故意不设守卫），
+    // 之后再来删那笔收入。目标状态已经是 in_stock，不该再改一次。
+    let data = sellDog(sellSeed(), 'd1', 120000, '2026-10-05')
+    data = setDogStatus(data, 'd1', 'in_stock')
+    const next = deleteEntry(data, firstSaleEntryId(data, 'd1'))
+    expect(dogById(next, 'd1').status).toBe('in_stock')
+    expect(next.dogs).toBe(data.dogs)
+  })
+
+  it('不修改传入的 data 本身', () => {
+    const data = sellDog(sellSeed(), 'd1', 120000, '2026-10-05')
+    const snapshot = structuredClone(data)
+    deleteEntry(data, firstSaleEntryId(data, 'd1'))
+    expect(data).toEqual(snapshot)
+    expect(dogById(data, 'd1').status).toBe('sold')
   })
 })

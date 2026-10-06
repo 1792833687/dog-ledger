@@ -487,3 +487,106 @@ export function receivePreOrder(
     )),
   }
 }
+
+/**
+ * 改一笔流水（记错了就改，不用删了重记）。
+ *
+ * **`type` / `id` / `batchId` / `dogId` 在类型上就不给改**：这几个字段回答的是「这笔账是谁的」，
+ * 让用户改它等于让一笔支出凭空变成另一只狗的成本，或者让一笔收入变成支出 ——
+ * 派生值（批次成本、每只狗的利润、合伙人分成）会跟着一起错，而账面上看不出来。
+ * 改错了就删掉重记。
+ *
+ * **`category` 只对 `type === 'expense'` 生效**：收入与转账类的 `category` 是**由动作决定的**
+ * （`sellDog` 写 `'sale'`，`addInjection` / `addDistribution` / `addReimbursement` 写 `'transfer'`），
+ * 它们不是用户填的标签。界面上的类别下拉只对支出出现，但类型上 `patch.category` 是普通
+ * `string`，谁都能传进来 —— 收入带上它会被静默忽略（`'sale'` 原样保留），而不是被改成某个成本项 id。
+ *
+ * `amount` 用 `Math.max(0, Math.round(x))`，与 `addExpense` / `sellDog` / `transferEntry` 一字不差：
+ * 0 合法，负数夹到 0，不报错。`patch` 里没提到的键取原值（`undefined` ≠ 清空，清空传 `''`）。
+ *
+ * 「什么都没改就点保存」返回**同一个引用**：界面据此知道不必写库，也不会把一次空操作
+ * 变成一次持久化。只有真正不同的字段才写进新对象。
+ */
+export function updateEntry(
+  data: AppData,
+  entryId: string,
+  patch: {
+    amount?: Money
+    date?: string
+    note?: string
+    paidBy?: 'pool' | string
+    category?: string
+  },
+): AppData {
+  const index = data.entries.findIndex(e => e.id === entryId)
+  if (index < 0) return data
+  const entry = data.entries[index]
+
+  const amount = patch.amount === undefined ? entry.amount : Math.max(0, Math.round(patch.amount))
+  const date = keepOrSet(patch.date, entry.date)
+  const note = keepOrSet(patch.note, entry.note)
+  const paidBy = keepOrSet(patch.paidBy, entry.paidBy)
+  const category = entry.type === 'expense' ? keepOrSet(patch.category, entry.category) : entry.category
+
+  if (
+    amount === entry.amount
+    && date === entry.date
+    && note === entry.note
+    && paidBy === entry.paidBy
+    && category === entry.category
+  ) {
+    return data
+  }
+
+  const next: LedgerEntry = { ...entry, amount, date, note, paidBy, category }
+  return { ...data, entries: data.entries.map(e => (e.id === entryId ? next : e)) }
+}
+
+/**
+ * 删一笔流水（记重了、记错了就删）。
+ *
+ * 物理删除，不做「软删除 / 标记作废」：账本上留一条看不见的幽灵记录，会让
+ * `entries` 的长度、下标扫描与导出备份全都得跟着解释「什么算存在」，得不偿失。
+ *
+ * **唯一的连带规则：删掉某只狗最后一条收入时把它放回在库。** 判定用**数组下标扫描**
+ * （与 `src/ui/dogLedger.ts` 的 `lastSaleIndex` 同一口径），不按 `date` 比大小 ——
+ * 同一天可以卖出两次，`date` 分不出先后，而数组顺序就是记账顺序。删掉的必须是该狗
+ * 所有 `income` 里下标最大的那一条才触发；删掉更早那条（卖 → 退款退回 → 又卖一次）
+ * 说明最后一条收入还在账上，狗还是在外面，状态一个字节都不许动。
+ *
+ * 触发之后还要**按目标状态再判一次**：只有当前是 `'sold'` 或 `'returned'` 才改成 `'in_stock'`。
+ * 狗已经是 `'dead'` 时一个字节都不动 —— 卖出去、退款退回、又标死亡这条路径可达，
+ * 而狗死了是另一个事实：无害化处理费已经按它记过，死亡率也算过它，
+ * 删一笔收入不能把死狗复活成在库。本来就在库的狗同理，不必再写一次。
+ *
+ * 删任何其他流水（支出、退款、注资、分红、报销、散收入、不挂狗的散收入）都不改任何狗状态：
+ * 退款流水不是「狗在哪」的决定者，注资分红更是与狗无关。
+ */
+export function deleteEntry(data: AppData, entryId: string): AppData {
+  const index = data.entries.findIndex(e => e.id === entryId)
+  if (index < 0) return data
+  const entry = data.entries[index]
+  const entries = data.entries.filter((_, i) => i !== index)
+
+  if (entry.type !== 'income' || entry.dogId === null) {
+    return { ...data, entries }
+  }
+
+  const dogId = entry.dogId
+  let lastIncomeIndex = -1
+  data.entries.forEach((e, i) => {
+    if (e.type === 'income' && e.dogId === dogId) lastIncomeIndex = i
+  })
+  if (lastIncomeIndex !== index) return { ...data, entries }
+
+  const dog = data.dogs.find(d => d.id === dogId)
+  if (!dog || (dog.status !== 'sold' && dog.status !== 'returned')) {
+    return { ...data, entries }
+  }
+
+  return {
+    ...data,
+    entries,
+    dogs: data.dogs.map(d => (d.id === dogId ? { ...d, status: 'in_stock' } : d)),
+  }
+}

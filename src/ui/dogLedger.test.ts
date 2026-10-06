@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest'
-import type { Dog, LedgerEntry } from '../domain/types'
+import { DEFAULT_DATA } from '../domain/types'
+import type { AppData, Dog, LedgerEntry } from '../domain/types'
+import { deleteEntry } from '../domain/actions'
 import { isOnHand, lastSaleIndex, refundedCurrentSale } from './dogLedger'
 
 const DOG_ID = 'd1'
@@ -91,5 +93,31 @@ describe('lastSaleIndex / refundedCurrentSale', () => {
   it('category 不是「售后退款」的支出不算退款', () => {
     const medical: LedgerEntry = { ...refund('e2', 8000), category: 'medical' }
     expect(refundedCurrentSale([sale('e1', 120000), medical], DOG_ID)).toBe(false)
+  })
+})
+
+describe('删掉退款流水之后 dogLedger 的判定', () => {
+  it('★ 删掉「售后退款」那笔支出 → 这次成交又算没退过，界面上「退款」按钮重新可用', () => {
+    // 这是 `dogLedger.ts` 与域层的接缝：判定一律看**当前**的流水数组，
+    // 所以纠错删掉一笔退款之后不需要额外清理任何缓存，按钮自然回来。
+    const data: AppData = {
+      ...DEFAULT_DATA,
+      dogs: [dog('returned')],
+      entries: [sale('e1', 120000), refund('e2', 120000)],
+    }
+    expect(refundedCurrentSale(data.entries, DOG_ID)).toBe(true)
+
+    const refunded = data.entries.find(e => e.category === 'aftercare_refund')
+    if (!refunded) throw new Error('没有退款流水')
+    const next = deleteEntry(data, refunded.id)
+
+    expect(next.entries).toHaveLength(1)
+    // 数组下标口径在物理删除下依然正确：唯一剩下的那条就是这次成交
+    expect(lastSaleIndex(next.entries, DOG_ID)).toBe(0)
+    expect(refundedCurrentSale(next.entries, DOG_ID)).toBe(false)
+    // 狗的当前状态是 returned，删的是支出而不是收入 → 状态一个字节不动
+    expect(next.dogs).toBe(data.dogs)
+    expect(next.dogs[0].status).toBe('returned')
+    expect(isOnHand(next.dogs[0])).toBe(true)
   })
 })
