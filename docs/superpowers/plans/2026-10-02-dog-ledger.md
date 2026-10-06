@@ -5215,6 +5215,26 @@ export function setBatchChannel(data: AppData, batchId: string, channel: Channel
 
 ---
 
+**Task 27b / 27c / 23c 实施记录（2026-10-03，实施者 `43e4ecdd`）**
+
+> 三个提交：`3035330 feat(ui): 预定单提醒提前天数进设置`（3 files / +41）→ `cfe5839 fix(ui): 预定单卡片显示还有几天，预定中的也能删`（3 files / +102 / −14）→ `1303e89 fix(domain): 改预定单也 trim 日期与卖家名`（2 files / +51 / −2）。
+>
+> 门禁：测试 657 → 660 → 667 → **671**（`Test Files 26 passed (26)`）；模块数全程 `✓ 55 modules transformed.`；lint 全程 `Found 0 warnings and 0 errors.`（71 files）；每个提交后 `git status --short` 干净。控制器独立复跑 `671 passed` / lint 0/0 一致。
+>
+> 红态：27b `2 failed | 14 passed`（`expected null to be '预定单提醒提前天数不能为负'`）；27c `7 failed | 30 passed`（全是 `TypeError: stageText is not a function`）；23c `2 failed | 8 passed`（`expected ' 2026-10-15 ' to be '2026-10-15'`、`expected '  老李  ' to be '老李'`）。
+>
+> 落点：`src/domain/settlement.ts:67` `if (!(settings.preOrderLeadDays >= 0)) return '预定单提醒提前天数不能为负'`（`:65-66` 注释写明负提前量会让「狗」页顶部把每张单都算成该收；`!(x >= 0)` 才拦得住 `NaN`）；`src/ui/pages/SettingsPanel.tsx:195-214` 新增「预定单」区块（`Field` label `预定单提前几天提醒`、suffix `天`、草稿 `preOrderLeadDaysDraft`、`applyDaysInput` 拆 `draft` / `days`、非法只改草稿不写库、灰字「默认 3 天。想提前一周就改成 7。」**没有「法定」字样**）；`src/ui/preOrderForm.ts` 尾部新增 `stageText(order: PreOrder, stage: PreOrderStage, today: string): string`（穷尽 `switch`；`overdue` → `已经过期 N 天`、`due_soon` → `今天去收` / `还有 N 天去收`、`daysBetween` 非有限回落 `该去收了`；import `daysBetween` 自 `src/domain/quarantine.ts:65`）；`src/ui/pages/DogsPage.tsx` 删掉 `PRE_ORDER_STAGE_LABEL`、卡片标签改 `{stageText(order, stage, today)}`、reserved 卡加第二行右对齐的「删掉」（与 cancelled 卡同 class、同 `openDeletePreOrder`、同 `ConfirmDialog`）；`src/domain/actions.ts:409` `keepOrSet(patch.sellerName?.trim(), order.sellerName)` 与 `:412` `keepOrSet(patch.collectDate?.trim(), order.collectDate)`，其余四个键一字未改。
+>
+> **裁定（全部保留）**：A1 27b 写 3 条测试（「0 合法」单独立条、天生绿，锁的是"别把 0 当错"）；A2 设置区块放在「检疫天数」与「成本项」之间；B1「删掉」单独第二行右对齐（320px 屏四按钮一行会把「收货」挤到 108px 折行）；B2 `ConfirmDialog` 的 message 改成对 reserved / cancelled 都成立的一句（原句「它是黄了的单子，没收到货」对 reserved 是**假话**）——新文案逐字：`删了就没有撤销，这张单子以后也查不回来。预定单删掉不影响任何批次，也删不掉已经记过的账。`；B3 `'2026-02-30'` 这类「形状对、日历上不存在」的串不做闰年校验（`daysBetween` 会把它滚到 3 月 2 日，返回有限数；任务书本就不要求）；B4 `stageText` 不额外拦「stage 与 collectDate 不匹配」（界面只从 `preOrderList` 拿成对值）；**C2 trim 放在 `keepOrSet` 的入参上而不是结果上**（放结果上会在用户「只改备注」时把库里历史遗留的 `' 老李 '` 静默洗干净）——**这是正确写法，后续同类改动照此**；C3 红态用 `' 2026-10-15 '` 而非任务书写的 `' 2026-10-20 '`，为的是让同一条测试里的 `preOrderStage` 断言有区分度（`today = '2026-10-14'` 时干净值是 `due_soon`、带空格被判 `overdue`），比原写法更好。
+>
+> **C1 已由控制器补正**，提交 `27340ea docs(ui): 预定单表单头注释跟上 23c（域层两条路都 trim）`：`src/ui/preOrderForm.ts` 文件头第 3 条原文「改单这条路域层不 trim」在 23c 之后过期，改成「`sellerName` / `collectDate` 在域层存的就是 trim 后的值（两条路都 trim，其余四键原样存）……**界面层不是那唯一的防线**」，并留一句历史注。
+>
+> **留给 Task 28 / 29 的硬提醒**：①`ConfirmDialog` 的取消键文案**写死「算了」**，Task 28 / 29 要用别的文案得改组件或加参数；②`src/ui/pages/DogsPage.tsx` 的 `const [today] = useState(() => todayLocalIso(new Date()))` 是挂载时取一次 —— 改完设置回到「狗」页（组件重挂载）才生效，跨零点也不刷新，与 MoneyPage / QuarantinePage / ReportPage 同体例；③设置面板**击键即写、无保存按钮**（输入框半途的空串只更新草稿、不落库）；④`PRE_ORDER_STAGE_CLASS` 仍是 `upcoming` 灰 / `due_soon` + `overdue` 红 / `received` 绿 / `cancelled` 灰，overdue 的「收货」主色突出依赖它；⑤`stageText` 的 stage 与 order 必须成对（单独构造调用时 overdue / due_soon 会写出语义相反的文案）。
+>
+> **同轮控制器对 Task 28 / 29 任务书的三处澄清**：Task 28 的提交按钮预览文案统一写成 `将新增 19 笔 · ¥1,234`（**用 `formatMoney` 拼，整数分不带小数点**，别为了凑 `¥1,234.00` 去改 `formatMoney`）；Task 29 的 Consumes 补上 **`refundedCurrentSale`（`src/ui/dogLedger.ts:38`）** 与「这个文件一字节都别改」；Task 29 新增排序口径提醒——`src/ui/pages/MoneyPage.tsx:37` 现在是 `const recent = [...data.entries].reverse().slice(0, 60)`（**先倒序再切片**），「显示全部」要渲染 `[...data.entries].reverse()`，**绝不许在写库路径里排序**（`entries` 的存储顺序是「记账顺序」，Task 26 的 `lastSaleIndex` / `deleteEntry` 依赖它）。
+
+---
+
 ### Task 28: 批次详情——补账表 + 卖家与留痕 + 「还没补成本」橙字
 
 **Goal:** 让用户收完狗回来，能在批次详情页一屏把这一批的成本补齐；并且**看得见**卖家是谁、比约定的少了没有。
@@ -5239,7 +5259,7 @@ export function setBatchChannel(data: AppData, batchId: string, channel: Channel
 - 四行输入（标签逐字）：**运输 + 笼具（整批一笔）**、**每只疫苗 / 驱虫 / 医疗**、**每只检疫（抗体检测 + 申报）**、**每只病死犬处理费**（后三个是"每只单价"，标签里必须写出"每只"，否则用户会当成总额）。
 - 区块里常显一行：「**这一批已记成本 ¥X · 共 N 笔（含收购款）**」，其中 ¥X = `batchTotalCost(data, batchId)`、N = 该批 `expense` 流水的条数（**两者都含收购款**，设计 §3.10 已写死口径）。
 - `batchCostsIncomplete(data, batchId)` 为 `true` 时，区块标题旁挂一行橙字：「**这一批还没补成本，保本价现在是偏低的**」（这是设计里那句话，逐字用）。
-- 提交按钮文案带笔数与金额：用 `previewBatchCosts` 实时算（"将新增 19 笔 · ¥1,234.00"）；**点之前弹一次确认**（用 Task 27 建的 `src/ui/components/ConfirmDialog.tsx`，**不许用 `window.confirm`**，文案含笔数与金额，并写明「只新增、不删改已有流水」），确认后才调 `addBatchCosts`。四行全 0 或全部非法 → 按钮禁用。
+- 提交按钮文案带笔数与金额：用 `previewBatchCosts` 实时算（"将新增 19 笔 · ¥1,234"，**用 `formatMoney` 拼，整数分不带小数点**）；**点之前弹一次确认**（用 Task 27 建的 `src/ui/components/ConfirmDialog.tsx`，**不许用 `window.confirm`**，文案含笔数与金额，并写明「只新增、不删改已有流水」），确认后才调 `addBatchCosts`。四行全 0 或全部非法 → 按钮禁用。
 - 补完账之后橙字必须消失（`batchCostsIncomplete` 的判定式就是"该批有没有一条 `category !== 'purchase'` 的支出"，流水一追加它就变 `false`——不需要任何缓存失效动作，但**要有一条走查/断言盯住它真的消失**）。
 - 区块里常显的「已记成本 ¥X · 共 N 笔（含收购款）」在补账后必须立刻变大（派生值现算）。
 - 金额输入一律走 `parseMoney`；非法 → 行内红字 + 按钮禁用；**空 = 0**（"不补这一项"与"这项是 0"在账上等价——因为填 0 本来就不写流水）。
@@ -5274,7 +5294,8 @@ export function setBatchChannel(data: AppData, batchId: string, channel: Channel
 - Modify: `src/ui/pages/MoneyPage.tsx`
 
 **Interfaces:**
-- Consumes: `updateEntry` / `deleteEntry`（Task 26）、`entryLabel` / `catLabel` / `partnerName` / `canSubmit`（`src/ui/moneyBook.ts`）、`parseMoney`、`amountInvalid`（`src/ui/moneyBook.ts`）、`useAppData`、**`src/ui/components/ConfirmDialog.tsx`（Task 27 建的，删除确认就用它，不许用 `window.confirm`）**、`formatMoney`
+- Consumes: `updateEntry` / `deleteEntry`（Task 26）、`entryLabel` / `catLabel` / `partnerName` / `canSubmit`（`src/ui/moneyBook.ts`）、`parseMoney`、`amountInvalid`（`src/ui/moneyBook.ts`）、**`refundedCurrentSale`（`src/ui/dogLedger.ts:38`，`deleteWarning` 判"该狗还挂着退款支出"要用；这个文件一字节都别改）**、`useAppData`、**`src/ui/components/ConfirmDialog.tsx`（Task 27 建的，删除确认就用它，不许用 `window.confirm`）**、`formatMoney`
+- 排序口径提醒：`src/ui/pages/MoneyPage.tsx:37` 现在是 `const recent = [...data.entries].reverse().slice(0, 60)`——**先倒序再切片**。`entries` 的存储顺序是"记账顺序"不是"日期顺序"（Task 26 的 `lastSaleIndex`/`deleteEntry` 都依赖它），所以「显示全部」要渲染 `[...data.entries].reverse()`，**绝不许在写库路径里排序**。
 - Produces: `src/ui/entryForm.ts` 里的纯函数：
   ```ts
   export interface EntryDraft { amount: string; date: string; note: string; paidBy: 'pool' | string; category: string }
