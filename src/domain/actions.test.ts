@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { DEFAULT_DATA, BUILTIN_COST_ITEMS } from './types'
-import type { Dog } from './types'
+import type { AppData, Dog, PreOrder } from './types'
 import {
   setDogStatus, sellDog, markDogDead, addExpense, createBatch,
   addInjection, addIncome, addReimbursement, addDistribution, setDogQuarantine,
@@ -11,6 +11,9 @@ import { batchSummary, dogIncome, dogOwnCost, batchTotalCost, dogProfitFen } fro
 import { poolBalance, advanceBalance, contributedCapital, distributedTo } from './ledger'
 import { quarantineStatus } from './quarantine'
 import { validateSettings } from './settlement'
+import {
+  addPreOrder, updatePreOrder, cancelPreOrder, deletePreOrder, type AddPreOrderInput,
+} from './actions'
 
 /** 建一个批次，并记一笔运输费 */
 function seed() {
@@ -981,5 +984,268 @@ describe('renameBatch', () => {
     const next = renameBatch(data, data.batches[0].id, '下午收的 2 只')
     expect(next.dogs[0]).toBe(data.dogs[0])
     expect(next.dogs[1]).toBe(data.dogs[1])
+  })
+})
+
+describe('addPreOrder', () => {
+  const good: AddPreOrderInput = {
+    sellerName: '老李',
+    sellerContact: '13800000000',
+    expectedCount: 6,
+    collectDate: '2026-10-20',
+    traits: '黑色，公',
+    note: '',
+    createdAt: '2026-10-04T09:00:00.000Z',
+  }
+
+  /** 取第 `index` 张预定单。下标越界就让测试炸掉，好过用 `!` 静音。 */
+  function at(data: AppData, index: number): PreOrder {
+    const found = data.preOrders[index]
+    if (!found) throw new Error(`第 ${index} 张预定单不存在`)
+    return found
+  }
+
+  it('追加一张预定单，状态从 reserved 起（收货与取消的字段都还没写）', () => {
+    const next = addPreOrder(DEFAULT_DATA, good)
+    expect(next.preOrders).toHaveLength(1)
+    const created = at(next, 0)
+    expect(created.sellerName).toBe('老李')
+    expect(created.sellerContact).toBe('13800000000')
+    expect(created.expectedCount).toBe(6)
+    expect(created.collectDate).toBe('2026-10-20')
+    expect(created.traits).toBe('黑色，公')
+    expect(created.note).toBe('')
+    expect(created.createdAt).toBe('2026-10-04T09:00:00.000Z')
+    expect(created.status).toBe('reserved')
+    expect(created.receivedCount).toBe(0)
+    expect(created.receivedBatchId).toBeNull()
+    expect(created.cancelReason).toBe('')
+    expect(created.id).toBeTruthy()
+    expect(next.preOrders[0]).not.toBe(good)
+  })
+
+  it('已有一张时追加在后面，前面的连引用都不换', () => {
+    const first = addPreOrder(DEFAULT_DATA, good)
+    const second = addPreOrder(first, { ...good, sellerName: '老王' })
+    expect(second.preOrders).toHaveLength(2)
+    expect(second.preOrders[0]).toBe(at(first, 0))
+    expect(second.preOrders[1].sellerName).toBe('老王')
+  })
+
+  it('卖家名为空（含只有空格）—— 原样返回同一引用', () => {
+    expect(addPreOrder(DEFAULT_DATA, { ...good, sellerName: '' })).toBe(DEFAULT_DATA)
+    expect(addPreOrder(DEFAULT_DATA, { ...good, sellerName: '   ' })).toBe(DEFAULT_DATA)
+  })
+
+  it('约定只数小于 1 —— 原样返回同一引用', () => {
+    expect(addPreOrder(DEFAULT_DATA, { ...good, expectedCount: 0 })).toBe(DEFAULT_DATA)
+    expect(addPreOrder(DEFAULT_DATA, { ...good, expectedCount: -3 })).toBe(DEFAULT_DATA)
+  })
+
+  it('去收的日子为空（含只有空格）—— 原样返回同一引用', () => {
+    expect(addPreOrder(DEFAULT_DATA, { ...good, collectDate: '' })).toBe(DEFAULT_DATA)
+    expect(addPreOrder(DEFAULT_DATA, { ...good, collectDate: '  ' })).toBe(DEFAULT_DATA)
+  })
+
+  it('卖家名与去收日子存的是 trim 之后的值', () => {
+    const next = addPreOrder(DEFAULT_DATA, { ...good, sellerName: ' 老李 ', collectDate: ' 2026-10-20 ' })
+    expect(at(next, 0).sellerName).toBe('老李')
+    expect(at(next, 0).collectDate).toBe('2026-10-20')
+  })
+
+  it('不修改传入的 data（batches / dogs / entries / settings 连引用都不换）', () => {
+    const next = addPreOrder(DEFAULT_DATA, good)
+    expect(next.batches).toBe(DEFAULT_DATA.batches)
+    expect(next.dogs).toBe(DEFAULT_DATA.dogs)
+    expect(next.entries).toBe(DEFAULT_DATA.entries)
+    expect(next.settings).toBe(DEFAULT_DATA.settings)
+    expect(DEFAULT_DATA.preOrders).toHaveLength(0)
+  })
+})
+
+describe('updatePreOrder', () => {
+  const good: AddPreOrderInput = {
+    sellerName: '老李', sellerContact: '13800000000', expectedCount: 6,
+    collectDate: '2026-10-20', traits: '黑色，公', note: '', createdAt: '2026-10-04T09:00:00.000Z',
+  }
+
+  function at(data: AppData, index: number): PreOrder {
+    const found = data.preOrders[index]
+    if (!found) throw new Error(`第 ${index} 张预定单不存在`)
+    return found
+  }
+
+  it('六个可改字段都能改', () => {
+    const data = addPreOrder(DEFAULT_DATA, good)
+    const id = at(data, 0).id
+    const next = updatePreOrder(data, id, {
+      sellerName: '老王', sellerContact: '13900000000', expectedCount: 8,
+      collectDate: '2026-10-25', traits: '花的', note: '带笼子',
+    })
+    const updated = at(next, 0)
+    expect(updated.sellerName).toBe('老王')
+    expect(updated.sellerContact).toBe('13900000000')
+    expect(updated.expectedCount).toBe(8)
+    expect(updated.collectDate).toBe('2026-10-25')
+    expect(updated.traits).toBe('花的')
+    expect(updated.note).toBe('带笼子')
+  })
+
+  it('patch 里没提到的键保持原值（显式传 undefined 也算没提到）', () => {
+    const data = addPreOrder(DEFAULT_DATA, good)
+    const id = at(data, 0).id
+    const next = updatePreOrder(data, id, { note: '只改备注', sellerName: undefined })
+    const updated = at(next, 0)
+    expect(updated.note).toBe('只改备注')
+    expect(updated.sellerName).toBe('老李')
+    expect(updated.expectedCount).toBe(6)
+    expect(updated.collectDate).toBe('2026-10-20')
+  })
+
+  it('改不了 status / receivedCount / receivedBatchId（白名单之外）', () => {
+    const data = addPreOrder(DEFAULT_DATA, good)
+    const id = at(data, 0).id
+    const next = updatePreOrder(data, id, { note: 'x' })
+    expect(at(next, 0).status).toBe('reserved')
+    expect(at(next, 0).receivedCount).toBe(0)
+    expect(at(next, 0).receivedBatchId).toBeNull()
+  })
+
+  it('★ 已收货的预定单只能改 note，其余键一律忽略（防绕过守卫再收一次）', () => {
+    const data = addPreOrder(DEFAULT_DATA, good)
+    const id = at(data, 0).id
+    const received: AppData = {
+      ...data,
+      preOrders: data.preOrders.map(o =>
+        o.id === id ? { ...o, status: 'received', receivedCount: 6, receivedBatchId: 'b1' } : o),
+    }
+    const next = updatePreOrder(received, id, {
+      note: '实收 6 只', sellerName: '改了', expectedCount: 99,
+      collectDate: '2030-01-01', sellerContact: '改了', traits: '改了',
+    })
+    const updated = at(next, 0)
+    expect(updated.note).toBe('实收 6 只')
+    expect(updated.sellerName).toBe('老李')
+    expect(updated.expectedCount).toBe(6)
+    expect(updated.collectDate).toBe('2026-10-20')
+    expect(updated.status).toBe('received')
+    expect(updated.receivedBatchId).toBe('b1')
+  })
+
+  it('找不到 id —— 原样返回同一引用', () => {
+    const data = addPreOrder(DEFAULT_DATA, good)
+    expect(updatePreOrder(data, 'no-such-order', { note: 'x' })).toBe(data)
+  })
+
+  it('只换这一张，其余预定单连引用都不换、顺序不变', () => {
+    let data = addPreOrder(DEFAULT_DATA, good)
+    data = addPreOrder(data, { ...good, sellerName: '老王' })
+    data = addPreOrder(data, { ...good, sellerName: '老张' })
+    const before = data.preOrders
+    const next = updatePreOrder(data, before[1].id, { note: '中间那张' })
+    expect(next.preOrders).toHaveLength(3)
+    expect(next.preOrders[0]).toBe(before[0])
+    expect(next.preOrders[1]).not.toBe(before[1])
+    expect(next.preOrders[2]).toBe(before[2])
+    expect(next.preOrders.map(o => o.sellerName)).toEqual(['老李', '老王', '老张'])
+  })
+})
+
+describe('cancelPreOrder 与 deletePreOrder', () => {
+  const good: AddPreOrderInput = {
+    sellerName: '老李', sellerContact: '13800000000', expectedCount: 6,
+    collectDate: '2026-10-20', traits: '黑色，公', note: '', createdAt: '2026-10-04T09:00:00.000Z',
+  }
+
+  function at(data: AppData, index: number): PreOrder {
+    const found = data.preOrders[index]
+    if (!found) throw new Error(`第 ${index} 张预定单不存在`)
+    return found
+  }
+
+  /** 把唯一那张预定单改成已收货 */
+  function receivedOne(): AppData {
+    const data = addPreOrder(DEFAULT_DATA, good)
+    const id = at(data, 0).id
+    return {
+      ...data,
+      preOrders: data.preOrders.map(o =>
+        o.id === id ? { ...o, status: 'received', receivedCount: 6, receivedBatchId: 'b1' } : o),
+    }
+  }
+
+  it('取消一张预定中的单：写 cancelled 与原因', () => {
+    const data = addPreOrder(DEFAULT_DATA, good)
+    const id = at(data, 0).id
+    const next = cancelPreOrder(data, id, '卖家不卖了')
+    expect(at(next, 0).status).toBe('cancelled')
+    expect(at(next, 0).cancelReason).toBe('卖家不卖了')
+  })
+
+  it('原因为空串就存空串（提示是界面的事）', () => {
+    const data = addPreOrder(DEFAULT_DATA, good)
+    const id = at(data, 0).id
+    expect(at(cancelPreOrder(data, id, ''), 0).cancelReason).toBe('')
+  })
+
+  it('已收货的不能取消 —— 原样返回同一引用', () => {
+    const received = receivedOne()
+    expect(cancelPreOrder(received, at(received, 0).id, '不收了')).toBe(received)
+  })
+
+  it('已取消的不能重复取消 —— 原样返回同一引用', () => {
+    const data = addPreOrder(DEFAULT_DATA, good)
+    const id = at(data, 0).id
+    const cancelled = cancelPreOrder(data, id, '黄了')
+    expect(cancelPreOrder(cancelled, id, '又黄了')).toBe(cancelled)
+  })
+
+  it('找不到 id 时不能取消 —— 原样返回同一引用', () => {
+    const data = addPreOrder(DEFAULT_DATA, good)
+    expect(cancelPreOrder(data, 'no-such-order', 'x')).toBe(data)
+  })
+
+  it('预定中的单可以真的删掉', () => {
+    const data = addPreOrder(DEFAULT_DATA, good)
+    const id = at(data, 0).id
+    const next = deletePreOrder(data, id)
+    expect(next.preOrders).toEqual([])
+    expect(next).not.toBe(data)
+  })
+
+  it('删掉中间一张，其余顺序与引用不变', () => {
+    let data = addPreOrder(DEFAULT_DATA, good)
+    data = addPreOrder(data, { ...good, sellerName: '老王' })
+    data = addPreOrder(data, { ...good, sellerName: '老张' })
+    const before = data.preOrders
+    const next = deletePreOrder(data, before[1].id)
+    expect(next.preOrders).toHaveLength(2)
+    expect(next.preOrders[0]).toBe(before[0])
+    expect(next.preOrders[1]).toBe(before[2])
+  })
+
+  it('★ 已收货的不能删（它连着批次）—— 原样返回同一引用', () => {
+    const received = receivedOne()
+    expect(deletePreOrder(received, at(received, 0).id)).toBe(received)
+  })
+
+  it('找不到 id —— 原样返回同一引用', () => {
+    const data = addPreOrder(DEFAULT_DATA, good)
+    expect(deletePreOrder(data, 'no-such-order')).toBe(data)
+  })
+
+  it('取消之后就能删了（cancel 的唯一出口）', () => {
+    const data = addPreOrder(DEFAULT_DATA, good)
+    const id = at(data, 0).id
+    expect(deletePreOrder(cancelPreOrder(data, id, '黄了'), id).preOrders).toEqual([])
+  })
+
+  it('不修改传入的 data 本身', () => {
+    const data = addPreOrder(DEFAULT_DATA, good)
+    const id = at(data, 0).id
+    cancelPreOrder(data, id, '黄了')
+    deletePreOrder(data, id)
+    expect(data.preOrders).toHaveLength(1)
+    expect(at(data, 0).status).toBe('reserved')
   })
 })

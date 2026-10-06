@@ -1,4 +1,4 @@
-import type { AppData, Batch, ChannelId, CostItemDef, Dog, DogStatus, LedgerEntry, Money, Settings } from './types'
+import type { AppData, Batch, ChannelId, CostItemDef, Dog, DogStatus, LedgerEntry, Money, PreOrder, Settings } from './types'
 import { newId } from './types'
 
 /**
@@ -304,4 +304,129 @@ export function renameBatch(data: AppData, batchId: string, name: string): AppDa
     ...data,
     batches: data.batches.map(b => (b.id === batchId ? { ...b, name } : b)),
   }
+}
+
+/**
+ * 新记一张预定单要填的东西。`createdAt` 由调用方传（域层不调 `new Date()`，
+ * 与 `today` 同一条纪律：设备时区不该进到域层里）。
+ */
+export interface AddPreOrderInput {
+  sellerName: string
+  sellerContact: string
+  expectedCount: number
+  /** 'YYYY-MM-DD' */
+  collectDate: string
+  traits: string
+  note: string
+  /** ISO datetime */
+  createdAt: string
+}
+
+/**
+ * 记一张预定单（先去村里看狗、谈好、约好日子再回来收）。
+ *
+ * 校验只管三样**少了就没法去收**的东西：卖家名、约几只、哪天去收。其余一律照收 ——
+ * 域层保持宽松、界面负责提示，与 `addCostItem` 不给 `name` 做 trim 同一道理。
+ *
+ * `sellerName` 与 `collectDate` 存 `trim()` 之后的值：这两个字段会被拿去**排序与比日期**，
+ * 前后带空格的 `' 2026-10-20 '` 会让日期比较静默失效（字典序对不上），而这是那种
+ * 「界面看着正常、提醒就是不来」的故障。
+ *
+ * `status` / `receivedCount` / `receivedBatchId` / `cancelReason` 从 `reserved` 起：
+ * 前三样只能由 Task 24 的收货动作写入，`cancelReason` 由 `cancelPreOrder` 写入。
+ */
+export function addPreOrder(data: AppData, input: AddPreOrderInput): AppData {
+  if (input.sellerName.trim() === '') return data
+  if (input.expectedCount < 1) return data
+  if (input.collectDate.trim() === '') return data
+
+  const order: PreOrder = {
+    id: newId(),
+    sellerName: input.sellerName.trim(),
+    sellerContact: input.sellerContact,
+    expectedCount: input.expectedCount,
+    collectDate: input.collectDate.trim(),
+    traits: input.traits,
+    note: input.note,
+    createdAt: input.createdAt,
+    status: 'reserved',
+    receivedCount: 0,
+    receivedBatchId: null,
+    cancelReason: '',
+  }
+  return { ...data, preOrders: [...data.preOrders, order] }
+}
+
+/**
+ * 改一张预定单。`patch` 里没提到的键保持原值（与 `setDogQuarantine` 同一口径：显式传
+ * `undefined` 也算没提到，不能写成 `{ ...order, ...patch }` —— 那会让「什么都没改」
+ * 等价于「把这格清空」，运行时字段真的变成 `undefined` 而静态类型还说是 `string`）。
+ *
+ * **已收货的那张只能再改 `note`**，其余键一律忽略：它连着已经建好的批次，改只数之类的
+ * 数字会让批次上的留痕对不上（设计 §3.9）。更要紧的是 `status` 本身**不在 patch 类型里**，
+ * 界面无法把「已收货」改回「预定中」再收一次、建出两个批次。
+ * 记错了先 `cancelPreOrder`，再 `deletePreOrder`。
+ */
+export function updatePreOrder(
+  data: AppData,
+  preOrderId: string,
+  patch: {
+    sellerName?: string
+    sellerContact?: string
+    expectedCount?: number
+    collectDate?: string
+    traits?: string
+    note?: string
+  },
+): AppData {
+  const order = data.preOrders.find(o => o.id === preOrderId)
+  if (!order) return data
+  // 已收货：白名单里只剩 note 一个键，其余连值都不看。
+  if (order.status === 'received') {
+    if (patch.note === undefined) return data
+    return {
+      ...data,
+      preOrders: data.preOrders.map(o => (o.id === preOrderId ? { ...o, note: patch.note ?? o.note } : o)),
+    }
+  }
+  const next: PreOrder = {
+    ...order,
+    sellerName: keepOrSet(patch.sellerName, order.sellerName),
+    sellerContact: keepOrSet(patch.sellerContact, order.sellerContact),
+    expectedCount: keepOrSet(patch.expectedCount, order.expectedCount),
+    collectDate: keepOrSet(patch.collectDate, order.collectDate),
+    traits: keepOrSet(patch.traits, order.traits),
+    note: keepOrSet(patch.note, order.note),
+  }
+  return { ...data, preOrders: data.preOrders.map(o => (o.id === preOrderId ? next : o)) }
+}
+
+/**
+ * 不收了。只有「预定中」的能取消 —— 已经收到货的（它连着批次）与已经取消过的都原样
+ * 返回同一引用。`reason` 为空就存空串：提示用户「黄了要写原因」是界面的事。
+ *
+ * 取消**不删单**：那张纸还是记过的东西，删掉会让「当初约过 6 只」这段历史消失。
+ */
+export function cancelPreOrder(data: AppData, preOrderId: string, reason: string): AppData {
+  const order = data.preOrders.find(o => o.id === preOrderId)
+  if (!order || order.status !== 'reserved') return data
+  return {
+    ...data,
+    preOrders: data.preOrders.map(o => (
+      o.id === preOrderId ? { ...o, status: 'cancelled', cancelReason: reason } : o
+    )),
+  }
+}
+
+/**
+ * 物理删掉一张预定单。**已收货的不能删**（它连着那个批次，删了单子批次上的来源就对不上，
+ * 而这一版不支持删批次，见设计 §1.3 非目标），已取消的和还预定中的都能删。
+ *
+ * 注意与 `deleteBatch` 那种「清空」的区别：预定单没有狗、没有成本、不进任何统计，
+ * 删掉它不会让任何一笔流水失去归属，所以这里是真删。
+ */
+export function deletePreOrder(data: AppData, preOrderId: string): AppData {
+  const order = data.preOrders.find(o => o.id === preOrderId)
+  if (!order || order.status === 'received') return data
+  return { ...data, preOrders: data.preOrders.filter(o => o.id !== preOrderId) }
 }
