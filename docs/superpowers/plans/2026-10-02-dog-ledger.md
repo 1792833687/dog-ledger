@@ -4988,7 +4988,8 @@ export function setBatchChannel(data: AppData, batchId: string, channel: Channel
 **必须满足的行为**
 - `updateEntry`：找不到 id → 同一引用。`amount` 有值时 `Math.max(0, Math.round(patch.amount))`（**0 合法、负数夹到 0**，与 `addExpense` / `sellDog` / `transferEntry` 一字不差）。`category` **只对 `type === 'expense'` 生效**：非 `expense` 的流水即使 patch 里带了 `category` 也**原样不动**（`income` 的 `'sale'`、转账类的 `'transfer'` 不能被改成别的）。`patch` 里的每个字段**只有真正不同**才写进去；**没有任何字段实际变化时返回同一引用**（界面上"什么都没改就点保存"不该产生一次写库）。
 - `deleteEntry`：找不到 id → 同一引用；否则物理删除那一笔，并且**在同一次更新里**处理连带：
-  - 被删的是 `type === 'income'` 且 `dogId` 非空，**并且它是该狗数组里最后一条 `income`**（用与 `src/ui/dogLedger.ts:24-28` 相同的"数组下标扫描"口径判定：该狗所有 `income` 中下标最大的那条就是这个 id）→ 把该狗 `status` 改回 `'in_stock'`。
+  - 被删的是 `type === 'income'` 且 `dogId` 非空，**并且它是该狗数组里最后一条 `income`**（用与 `src/ui/dogLedger.ts:24-28` 相同的"数组下标扫描"口径判定：该狗所有 `income` 中下标最大的那条就是这个 id）→ 把该狗 `status` 改回 `'in_stock'`，**但该狗当前已经是 `dead` 时一个字节都不动**（可达路径：卖出 → 退款退回 `returned` → 又标了 `dead`；狗死了是另一个事实，无害化处理费与死亡率都按它算过，删一笔收入不能把狗复活成在库）。
+  - **改回 `in_stock` 时按目标状态再判一次**：`status === 'sold' || status === 'returned'` 才改，其余（`dead`、本来就在库）原样不动。
   - **不是最后一条**（可达路径：卖 → 退款把狗变 `returned` → `isOnHand` 让「卖出」按钮重现 → 又卖一次，同一 dogId 两条 `income`）→ **狗的状态一个字节都不许动**。
   - 删任何其他流水（支出、退款、注资、分红、报销、散收入）→ **不改任何狗状态**（退款流水不是"狗在哪"的决定者）。
 - `src/ui/dogLedger.ts` 的 `lastSaleIndex` / `refundedCurrentSale` **不要动**：它们的数组下标口径在物理删除下依然正确（删掉退款那笔，`some(i > saleIdx)` 自然变 `false`），而**改成按 `date` 会打挂 `dogLedger.test.ts:62-68`** 那条「卖 → 退款 → 又卖出（同日）」的既有回归。这是那轮审查的复核结论，不要再"顺手改好"。
@@ -4999,6 +5000,7 @@ export function setBatchChannel(data: AppData, batchId: string, channel: Channel
 - `type` / `id` / `batchId` / `dogId` 在 `updateEntry` 之后**逐字不变**。
 - 无变化的 patch → `toBe(data)`。
 - 删销售流水（该狗只有这一条 `income`）→ 狗回 `'in_stock'`，其余狗状态不变。
+- **狗已经 `dead` 时删它那条（最后的）销售流水 → 狗状态仍是 `dead`，一个字节都不动**（控制器派发前补的裁定：卖 → 退款退回 → 又标死亡，这条路径可达；「删了收入就把死狗复活成在库」会让死亡率与无害化处理费全对不上）。
 - **「卖 → 退款（狗变 `returned`）→ 又卖一次」之后删掉更早那条 `income` → 狗状态不变**（这是 C3 的核心用例，别省）。
 - 删退款流水 → 狗状态不变、`refundedCurrentSale` 变 `false`（在 `dogLedger.test.ts` 里用既有的 `sale` / `refund` 辅助函数补一条，证明删掉之后界面不会继续显示「已记退款」）。
 - 删注资 / 分红 / 报销 / 支出 → 任何狗状态都不变。
