@@ -62,5 +62,8 @@ export function validateSettings(settings: Settings): string | null {
   // 而 NaN 天的等待期会让「检」页面把刚接种的狗判成「可以送检」。
   if (!(settings.rabiesWaitDays >= 0)) return '狂犬免疫后等待天数不能为负'
   if (!(settings.quarantineLeadDays >= 0)) return '检疫申报提前天数不能为负'
+  // 同一条理由：负的提前量意味着「还没到那一天就已经该去收了」，
+  // 「狗」页顶部那行提醒会把每张预定单都算成该收。
+  if (!(settings.preOrderLeadDays >= 0)) return '预定单提醒提前天数不能为负'
   return null
 }

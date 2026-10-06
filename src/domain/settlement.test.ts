@@ -117,4 +117,20 @@ describe('validateSettings', () => {
     expect(validateSettings({ ...DEFAULT_SETTINGS, rabiesWaitDays: 0, quarantineLeadDays: 0 }))
       .toBeNull()
   })
+
+  // 预定单提醒提前天数：负数同样会让「狗」页顶部的提醒算不出来（提前量是负数
+  // 意味着「还没到那一天就已经该去收了」），用同一个 `!(x >= 0)` 拦 NaN。
+  it('预定单提醒提前天数为负时报错', () => {
+    expect(validateSettings({ ...DEFAULT_SETTINGS, preOrderLeadDays: -1 }))
+      .toBe('预定单提醒提前天数不能为负')
+  })
+
+  it('预定单提醒提前天数是 NaN 时报错', () => {
+    expect(validateSettings({ ...DEFAULT_SETTINGS, preOrderLeadDays: NaN }))
+      .toBe('预定单提醒提前天数不能为负')
+  })
+
+  it('预定单提醒提前天数为 0 是合法的（＝当天才提醒）', () => {
+    expect(validateSettings({ ...DEFAULT_SETTINGS, preOrderLeadDays: 0 })).toBeNull()
+  })
 })

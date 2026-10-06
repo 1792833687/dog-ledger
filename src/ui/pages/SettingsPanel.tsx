@@ -31,6 +31,7 @@ export function SettingsPanel() {
   // 两个天数各自一份草稿：清空其中一个不能影响另一个，也不能回写账上的值。
   const [rabiesWaitDaysDraft, setRabiesWaitDaysDraft] = useState<string | null>(null)
   const [quarantineLeadDaysDraft, setQuarantineLeadDaysDraft] = useState<string | null>(null)
+  const [preOrderLeadDaysDraft, setPreOrderLeadDaysDraft] = useState<string | null>(null)
 
   const s = data.settings
   const error = validateSettings(s)
@@ -188,6 +189,27 @@ export function SettingsPanel() {
         />
         <p className="text-xs text-gray-400">
           出售前要提前这么多天申报检疫（《动物检疫管理办法》第八条第二款是三天，《犬产地检疫规程》4.1 也是三天）。
+        </p>
+      </div>
+
+      <h3 className="mt-4 text-sm font-semibold text-gray-700">预定单</h3>
+      <div className="mt-2 space-y-2">
+        <Field
+          label="预定单提前几天提醒"
+          suffix="天"
+          inputMode="numeric"
+          value={preOrderLeadDaysDraft ?? String(s.preOrderLeadDays)}
+          error={preOrderLeadDaysDraft === null ? undefined : inputError('days', preOrderLeadDaysDraft)}
+          onChange={v => {
+            const { draft, days } = applyDaysInput(v)
+            // 与上面两个天数同样的草稿制：空串 / 非数字 / 负数都不写账、只出红字。
+            setPreOrderLeadDaysDraft(draft)
+            if (days === null) return
+            void update(d => updateSettings(d, { preOrderLeadDays: days }))
+          }}
+        />
+        <p className="text-xs text-gray-400">
+          默认 3 天。想提前一周就改成 7。
         </p>
       </div>
 
