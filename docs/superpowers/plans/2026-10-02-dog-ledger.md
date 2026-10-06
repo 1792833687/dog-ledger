@@ -5016,6 +5016,18 @@ export function setBatchChannel(data: AppData, batchId: string, channel: Channel
   git commit -m "feat(domain): 流水可改可删（含删销售流水的连带规则）"
   ```
 
+> **Task 26 实施记录（2026-10-06）—— 提交 `8938f93`**（3 files / +422 / −3：`src/domain/actions.ts` +103、`src/domain/actions.test.ts` +292、`src/ui/dogLedger.test.ts` +30；**`src/ui/dogLedger.ts` 一个字节没动**）
+>
+> **门禁**：`Test Files 25 passed (25)` / `Tests 634 passed (634)`（基线 25 / 610，**+24**）、`tsc -b` 无输出 + `✓ 52 modules` / `✓ built in 231ms`、`npx oxlint` `Found 0 warnings and 0 errors.`（68 files）、`git status --short` 空。控制器独立复跑一致。红态：`TypeError: deleteEntry is not a function`（`actions.test.ts:1685`、`dogLedger.test.ts:112`）、`Tests 24 failed | 610 passed (634)`；单跑 `-t "改金额"` 得 `TypeError: updateEntry is not a function`。
+>
+> **落点**：`src/domain/actions.ts:510 updateEntry`、`:565 deleteEntry`（都在 `receivePreOrder` 之后，文件现 592 行）。`updateEntry` 逐字：`const amount = patch.amount === undefined ? entry.amount : Math.max(0, Math.round(patch.amount))`；`const category = entry.type === 'expense' ? keepOrSet(patch.category, entry.category) : entry.category`；五字段全等 → `return data`；否则 `entries.map(e => e.id === entryId ? next : e)`（未命中条目保持原引用）。`deleteEntry` 逐字：`const entries = data.entries.filter((_, i) => i !== index)`；`entry.type !== 'income' || entry.dogId === null` → `{ ...data, entries }`；在原数组上扫 `lastIncomeIndex`，`lastIncomeIndex !== index` → `{ ...data, entries }`；`!dog || (dog.status !== 'sold' && dog.status !== 'returned')` → `{ ...data, entries }`；否则 `dogs.map` 只换那一只。
+>
+> **偏离（全部接受）**：①派生值断言用 `costing.ts` 的 `batchTotalCost` 而非任务书写的 `batchSummary`（更直接，且该文件已 import）；②多两条加严测试（`income` 带与现值相同的 `category` → 同一引用；狗已被手动改回在库时删收入 → 状态仍 `in_stock` 且**狗对象连引用都不换**）；③「删支出」一条扩成 5 个目标（医疗支出/注资/分红/报销/**不挂狗的散收入**，后者恰好卡在连带判定的第一个守卫上）；④多处断言收严到引用级（`next.dogs === data.dogs` 等），顺带钉住"不必要的新对象"这条纪律。
+>
+> **控制器裁定（5 条判断全部保留）**：①**`amount` 不挡 `NaN`**——照任务书"与 `addExpense`/`sellDog`/`transferEntry` 一字不差"保持裸 `Math.max(0, Math.round(x))`；`patch.amount = NaN` 会写进一笔 NaN 流水。**裁定：保留，记为已知边界**——`JSON.stringify(NaN)` 是 `null`，所以备份文件带不进 NaN；没有任何界面路径会产生 NaN；只给这一个函数加守卫反而与另外三个写金额的动作分叉。（真正的通用挡板在 Task 25 的 `safeMoney`，它管补账那条路径。）②"最后一条"的扫描放在**原数组**上（不做删后判"已无 income"），与 `dogLedger.ts:24-28` 逐字同口径。③`paidBy?: 'pool' | string` 照抄，不收窄（它实际坍缩成 `string`，与 `LedgerEntry.paidBy` 现状一致）。④复用模块级 `keepOrSet<T>`（`actions.ts:189-191`）而不是就地展开三元。⑤它中途自我纠正过一条测试（原写"删掉一只狗名下那条非销售的收入"实际走的是正常卖出回退路径，那句 `next.dogs === data.dogs` 会假失败），改成先 `setDogStatus(..., 'in_stock')` 再删——**如实记录，已定案**。
+>
+> **交给 Task 27 起的四条硬提醒**：①这两个函数目前**没有任何界面调用方**，连带规则只在测试里跑过；②**删一笔账不会撤销一次收货**——`preOrders.receivedBatchId` / `receivedCount` 不受影响，将来要做"撤销收货"必须另开函数，不要往 `deleteEntry` 里塞；③删流水不会删批次，批次成本会变小、可能重新变回"账没补全"（派生值全是现算的，没有缓存要失效）；④**`entries` 的顺序是「记账顺序」不是「日期顺序」**，`deleteEntry` 与 `lastSaleIndex` 都依赖它——将来若要在界面上排序，**排序只能发生在展示层**，把排序结果写回 `entries` 会同时打挂"最后一条收入"的语义与 `dogLedger.test.ts:62-68` 那条同日卖两次的回归。
+
 ---
 
 ### Task 27: 预定单界面（「狗」页顶部的预定单区）
@@ -5025,6 +5037,7 @@ export function setBatchChannel(data: AppData, batchId: string, channel: Channel
 **Files:**
 - Create: `src/ui/preOrderForm.ts`
 - Create: `src/ui/preOrderForm.test.ts`
+- Create: `src/ui/components/ConfirmDialog.tsx`（共用的二次确认弹窗——**Task 29 删流水时也用它**，全仓只做一个）
 - Modify: `src/ui/pages/DogsPage.tsx`
 
 **Interfaces:**
@@ -5043,13 +5056,14 @@ export function setBatchChannel(data: AppData, batchId: string, channel: Channel
   - 卡片列表严格按 `preOrderList(data, today)` 的顺序渲染，每张卡显示：卖家名、`约 ${expectedCount} 只`、`${collectDate} 去收`、一个阶段标签（`upcoming`「还没到日子」/ `due_soon` 与 `overdue` 都显示「**该去收了**」、`received`「已收货」、`cancelled`「黄了」+ 原因）。
   - 没有预定单时**不渲染整块**（与「报」页空态的处理一致：空时不占位置），而不是显示一个空标题。
 - 每张卡的动作：
-  - `reserved`（`upcoming` / `due_soon` / `overdue`）：**「收货」「改」「黄了」**三个按钮。`overdue` 时「收货」用主色突出。
-  - `received`：只显示「已收货」与批次名（可点进那个批次）+「改备注」（**只有 `note` 可改**）。
+  - `status === 'reserved'`（阶段是 `upcoming` / `due_soon` / `overdue` 三者之一）：**「收货」「改」「黄了」**三个按钮。`overdue` 时「收货」用主色突出。
+  - `received`：只显示「已收货」与批次名（可点进那个批次）+「改备注」（**只有 `note` 可改**）。批次名自己查：`data.batches.find(b => b.id === order.receivedBatchId)`（`receivedBatchId` 类型上是 `string | null`，理论上查不到就只显示「已收货」不给链接，别写 `!`）。
   - `cancelled`：只显示原因 +「删掉」。
 - 新建 / 修改表单（6 个字段：卖家、联系方式、约几只、约好哪天、特征、备注）：`type="date"` 用**原生日期输入**（与检疫页一致），只数与 `parseAliveInput` 同口径（空或非法 → 红字、按钮禁用）；提交前调 `canSubmitPreOrder` / `draftIssue`。
-- 收货弹窗**只有两个字段**：实收只数（默认 `expectedCount`）、每只收购价（默认空）。确认 → `receivePreOrder(data, id, { name, date, receivedCount, unitPriceFen })`，其中 `name = \`收狗 ${receivedCount} 只 ${localTimeHm(new Date())}\``、`date = todayIso()`、`unitPriceFen = parseMoney(...)`；这三个都由**事件处理器**算（渲染体里不许 `new Date()`）。成功后显示「已收货，批次：{name}」。
+- 收货弹窗**只有两个字段**：实收只数（默认 `expectedCount`）、每只收购价（默认空）。确认 → `receivePreOrder(data, id, { name, date, receivedCount, unitPriceFen })`（**逐字签名**：`receivePreOrder(data: AppData, preOrderId: string, input: { name: string; date: string; receivedCount: number; unitPriceFen: Money }): AppData`，见 `src/domain/actions.ts:452-455`），其中 `name = \`收狗 ${receivedCount} 只 ${localTimeHm(new Date())}\``、`date = todayIso()`（`DogsPage.tsx:35` 本文件那个）、`unitPriceFen = parseMoney(...)`（**空串按 0 处理**，与 Task 24 一致）；这三个都由**事件处理器**算（渲染体里不许 `new Date()`）。**注意域层的守卫是"原样返回同一引用"**（`:460 Math.floor` 后 `< 1` 就返回），所以界面必须先用 `parseAliveInput` 把非法只数拦成红字，否则用户点了确认却什么都没发生。成功后显示「已收货，批次：{name}」。
+- 新建 / 修改表单提交时 `createdAt` 传 `new Date().toISOString()`（**ISO datetime，不是 `YYYY-MM-DD`**——`AddPreOrderInput.createdAt` 的注释就是这么写的），同样在事件处理器里取。
 - 「黄了」弹窗：一个原因输入（可空，但空时给中性提示「不写原因也行，以后自己看得懂就行」）→ `cancelPreOrder`。
-- 删除：二次确认（`window.confirm` 与既有删除入口保持同一体例）→ `deletePreOrder`；**已收货的卡片没有删除按钮**。
+- 删除：二次确认 → `deletePreOrder`；**已收货的卡片没有删除按钮**。**不许用 `window.confirm`**：控制器派发前 grep 过，全仓 `src/` 里一个 `window.confirm` 都没有，既有破坏性动作（卖出、退款、记错了改回在库）全部走 `Modal`，而 `src/ui/components/Modal.tsx:4-6` 的注释写明了理由（系统弹框没法写中文提示）。新建 `src/ui/components/ConfirmDialog.tsx`（签名建议 `{ open: boolean; title: string; message: string; confirmLabel: string; onConfirm: () => void; onClose: () => void }`，内部用既有 `Modal` + 一个红底/灰底按钮对），把「删了就没有撤销」「预定单删掉不影响任何批次」这类话写进 `message`。
 - 表单状态（草稿）**不得跨卡片残留**：Task 21b 那个"草稿串台"的缺陷在这里同样会犯——打开另一张卡或收起表单时必须重置草稿；把理由写进 state 的注释里。
 
 **测试要求**（`preOrderForm.test.ts`）
@@ -5060,10 +5074,10 @@ export function setBatchChannel(data: AppData, batchId: string, channel: Channel
 **Steps**
 - [ ] **Step 1**：写 `preOrderForm.test.ts` 与实现（这部分与界面无关，可以先红后绿）。
 - [ ] **Step 2**：改 `src/ui/pages/DogsPage.tsx`（只加列表视图内的预定单区，**详情视图不碰**）。
-- [ ] **Step 3**：`npx vitest run` / `npm run build` / `npm run lint`（注意 `noUnusedLocals`：`preOrderStage` 之类没用到的符号不要 import）。
+- [ ] **Step 3**：`npx vitest run` / `npm run build` / `npm run lint`（注意 `noUnusedLocals`：`preOrderStage` 之类没用到的符号不要 import）。**模块数应从 52 变为 53**（`preOrderForm.ts` 是这一批里第一个进 bundle 的新文件）；如果没变，说明界面其实没接上。
 - [ ] **Step 4**：提交：
   ```bash
-  git add src/ui/preOrderForm.ts src/ui/preOrderForm.test.ts src/ui/pages/DogsPage.tsx
+  git add src/ui/preOrderForm.ts src/ui/preOrderForm.test.ts src/ui/components/ConfirmDialog.tsx src/ui/pages/DogsPage.tsx
   git commit -m "feat(ui): 预定单区（记单、提醒、收货、黄了）"
   ```
 
