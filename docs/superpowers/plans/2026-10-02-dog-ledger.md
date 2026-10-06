@@ -24,6 +24,10 @@
   - 反例（Task 10 第一版真实踩过）：`markDogDead` 的守卫写成 `dog.status !== 'in_stock'`、界面按钮写成 `d.status === 'in_stock'`，合起来导致**退回的狗既卖不掉、也记不了死亡**，与 `costing.ts` 把它算进成本分母的口径自相矛盾。
   - 真正要挡住的是这两种：`sold`（已经卖掉、收入已入账、狗不在我们账上，它此后的死活不是我们的损失）与 `dead`（已经死了，不重复记）。
   - 「钱退了但狗没要回来」的状态**保持 `sold`**（设计文档 `:225`），不要在那种情况下改成 `returned`。
+- **修订三的不变量：加字段就必须同时修两条读路径（D16）。** `AppData` 加顶层字段（本次是 `preOrders`）时，①本地读取路径 `src/state/persistence.ts` 的 `loadPersistedData` 里跑 `normalizeAppData()` 补齐；②导入路径 `src/storage/backup.ts` 的 `importBackup` 里那个**逐字重建的白名单对象**必须显式补上 `preOrders: data.preOrders ?? []`。**写成 `[]` 是错的**——`exportBackup` 原样序列化整个 `data`，所以那会造成「导出含预定单、导入就丢」，而只测旧格式导入的用例照样全绿。`version` 保持 `1`，不做破坏性迁移；用户手机上已有真实数据，**任何"打不开"都是本项目最严重的失败**。
+- **修订三的不变量：动作函数一律纯函数、返回新对象；守卫不通过一律返回同一引用（`return data`），绝不抛错。** 全仓既有 16 个 `actions.ts` 导出都是这个口径（`actions.ts:80,91,197,225,273`），新增的 `receivePreOrder` / `receiveBatch` / `updatePreOrder` / `deletePreOrder` / `cancelPreOrder` / `updateEntry` / `deleteEntry` / `addBatchCosts` 全部照办。**唯一的例外是"必须让用户知道被拒了"的界面红字**，那由 UI 自己判断（例如 `count < 1` 时域层返回同一引用、界面按钮直接禁用）。
+- **修订三的不变量：金额一律 `Math.max(0, Math.round(x))`，全仓一字不差。** 既有 `addExpense`(`actions.ts:26-53`)、`sellDog`(`:89-111`)、`transferEntry`(`:121-143`) 都是这样：0 是合法的，负数是**夹取**到 0，不是拒绝。所以**不要**在编辑路径上新立一条"金额必须 > 0"的规矩——那会造成"记得下、改不动"这种自相矛盾。界面负责拦"不是数字"。
+- **修订三的不变量：`costing.ts` 是唯一算钱的地方。** 界面里不得出现 `base + extra + fixed / n` 这类自算式子，补账表也不得自己算成本（见 Task 25）。修订单项数据（批次去向、狗的检疫字段、预定单）时，任何**派生数字**（保本价、盈亏、余额、分账）都必须靠 `src/domain/costing.ts` / `ledger.ts` / `settlement.ts` 现算得到——上一版 22 个测试文件证明这些全是派生值，删改流水不会让它们算错。
 - **UI 层要"今天"，用 `todayLocalIso(new Date())`（`src/ui/planForm.ts`），绝不要 `new Date().toISOString().slice(0, 10)`。** 后者是 UTC，东八区晚上 8 点后返回的是昨天——"今天卖的狗"会被记在昨天，检疫的"有效期到哪天"也会跟着错一天。页面里统一 `import { todayLocalIso } from '../planForm'`。
 - **UI 层不能在渲染体里调 `new Date()`；实测唯一能过 lint 的写法是 `useState` 的惰性初始化。** 本仓门禁是 `npm run lint` 0 warning，而 `react(purity)` 会拦下渲染体里的 `new Date()`。四种写法已用 `npx oxlint`（116 rules）逐一实测：
   - ✗ `const today = todayLocalIso(new Date())` → `react(purity): Cannot call impure function during render`
@@ -4614,7 +4618,503 @@ export function setBatchChannel(data: AppData, batchId: string, channel: Channel
 
 ---
 
+### Task 22–30：修订三（预定单 / 先做后补账 / 流水纠错）
+
+> **这一组任务的由来。** 第一版（Task 1–21）已上线并在真机上用起来了。用户用了一段时间后提了三件事（原话）：「我们找到的狗还没有合适的年龄段就预定了……等长到两个月大我们会去收，**等于是有一批预定单**」「我希望是我们**先做后才生成账目表再记录**的」「还有些功能细节也帮我完善（＝**流水能改能删**）」。设计已按 `docs/superpowers/specs/2026-10-02-dog-trading-ledger-design.md` 的**修订三**（D13–D16、§3.9/§3.10/§3.11）写定，并经一轮只读审查改定（提交 `a2f830b` → `c169327`）。**任务书里凡是与代码冲突的断言，都以那轮审查的复核结论为准**——尤其：`refundedCurrentSale` **不改**、金额**不新立"必须 > 0"**、`createBatchFromPlan` **删除而不是保留**。
+>
+> **顺序（任务编号是身份，不是执行顺序）**：`22 → 23 → 24 → 25 → 26 → 27 → 28 → 29 → 30`。前五个是纯域层（每一步都能独立跑测试），20 号之后才碰界面，因为界面依赖的签名必须先生效。**Task 30 是收尾与重新上线**：`### Task 14` 的内容（备份安全网、PWA、DEPLOY.md、README）**已在第一版落地并上线**，本组任务不再重做它，改完之后按 Task 30 重新构建与推送即可。
+>
+> **这一组的头号风险是数据，不是功能。** 用户手机上有真实数据，线上站址已在使用。所以 Task 22 排在第一位、并且是**唯一**允许碰 `AppData` 形状的任务；它必须做到：老数据照常打开、老备份照常恢复、**新备份（含预定单）能原样还原**。
+
+---
+
+### Task 22: 数据层——预定单类型、`preOrderLeadDays`、老数据兼容
+
+**Goal:** 让 `AppData` 多出 `preOrders`、`Settings` 多出 `preOrderLeadDays`，并保证**用户手机上已有的数据与已有的备份文件都照常工作**。这一步之后界面上还看不到任何变化（预定单区在 Task 27），但类型与读路径已经就位。
+
+**Files:**
+- Modify: `src/domain/types.ts`（新增 `PreOrderStatus` / `PreOrder`；`AppData.preOrders`；`Settings.preOrderLeadDays`；`DEFAULT_SETTINGS` 与 `DEFAULT_DATA` 补默认值）
+- Modify: `src/domain/types.test.ts`
+- Create: `src/domain/normalize.ts`（纯函数 `normalizeAppData`）
+- Create: `src/domain/normalize.test.ts`
+- Modify: `src/state/persistence.ts`（`loadPersistedData` 里接上 `normalizeAppData`）
+- Modify: `src/state/persistence.test.ts`
+- Modify: `src/storage/backup.ts`（`importBackup` 的白名单对象补 `preOrders`）
+- Modify: `src/storage/backup.test.ts`
+
+**Interfaces:**
+- Consumes: `DEFAULT_DATA` / `DEFAULT_SETTINGS` / `AppData`（`src/domain/types.ts:144-199`）、`loadPersistedData`（`src/state/persistence.ts:12-18`）、`importBackup`（`src/storage/backup.ts:16`，白名单对象在 `:36-47`）
+- Produces:
+  ```ts
+  export type PreOrderStatus = 'reserved' | 'received' | 'cancelled'
+  export interface PreOrder {
+    id: string
+    sellerName: string
+    sellerContact: string
+    expectedCount: number
+    collectDate: string        // 'YYYY-MM-DD'
+    traits: string
+    note: string
+    createdAt: string          // ISO datetime
+    status: PreOrderStatus
+    receivedCount: number
+    receivedBatchId: string | null
+    cancelReason: string
+  }
+  // AppData 新增 preOrders: PreOrder[]；Settings 新增 preOrderLeadDays: number（默认 3）
+  export function normalizeAppData(raw: unknown): AppData   // src/domain/normalize.ts
+  ```
+
+**必须满足的行为**
+- `AppData` 加 `preOrders: PreOrder[]`；`Settings` 加 `preOrderLeadDays: number`（默认 **3**）；`DEFAULT_DATA` 补 `preOrders: []`。**注意别名陷阱**：`DEFAULT_DATA.settings` 与 `DEFAULT_SETTINGS` 是同一个对象（`types.ts:196-199` 附近），所以 `preOrderLeadDays: 3` 只写在 `DEFAULT_SETTINGS` 里一份；`preOrders: []` 写在 `DEFAULT_DATA` 里。
+- `normalizeAppData(raw: unknown): AppData` 是**纯函数**（只依赖 `./types`，不得 import React / storage）：① `raw` 不是对象（`null` / 数组 / 字符串 / 数字）→ 返回 `structuredClone(DEFAULT_DATA)`；② `settings` = `{ ...DEFAULT_SETTINGS, ...(rawSettings 是对象 ? rawSettings : {}) }`，其中 `partners` / `costItems` 不是数组时回落默认值（与 `importBackup` 的既有写法同口径）；③ `batches` / `dogs` / `entries` / `preOrders` 不是数组时取 `[]`；④ `version` 一律写成 `1`；⑤ **不得就地修改 `raw`**。
+- `src/state/persistence.ts` 的 `loadPersistedData`：把 `return await storage.load()` 改成「拿回来是 `null` 就返回 `null`，否则 `return normalizeAppData(raw)`」。**try/catch → 返回 `null` 的既有行为一字不改**（它绝不允许 reject，否则界面永远停在「正在载入…」）。
+- `src/storage/backup.ts` 的 `importBackup`：白名单对象里**显式**补 `preOrders: data.preOrders ?? []`。**`preOrders: []` 是错的**——`exportBackup` 是原样序列化整个 `data`，写成 `[]` 会造成「导出含预定单、导入就丢」，而只测旧格式导入的用例照样全绿。
+
+**测试要求**
+- `src/domain/normalize.test.ts`
+  - 缺 `preOrders`、缺 `preOrderLeadDays` 的旧对象 → 补齐为 `[]` 和 `3`，**其余字段逐字不变**（`toEqual` 对着一个手工写全的期望对象比，不要只比长度）。
+  - 已完整的数据 → 语义不变（`toEqual(data)`），且**输入对象没被改**（改前 `structuredClone` 一份做快照，事后 `toEqual` 快照）。
+  - `preOrders: null`、`preOrders: {}` → `[]`；`entries` 不是数组 → `[]`。
+  - `normalizeAppData(null)` / `('abc')` / `([])` → 与 `DEFAULT_DATA` 等值，且 `DEFAULT_DATA` 自己**没有被污染**（返回值的 `preOrders` push 一下，再断言 `DEFAULT_DATA.preOrders` 仍是 `[]`）。
+- `src/domain/types.test.ts`：`DEFAULT_SETTINGS.preOrderLeadDays === 3`；`DEFAULT_DATA.preOrders` 是空数组；构造一个字面量 `PreOrder` 并逐字断言（钉住 12 个字段名）。
+- `src/state/persistence.test.ts`：存储里塞一个**不含 `preOrders` 的旧对象** → `loadPersistedData` 返回的对象有 `preOrders: []` 与 `preOrderLeadDays: 3`；`storage.load()` 抛错时**仍然返回 `null`**（既有用例必须继续通过）。
+- `src/storage/backup.test.ts`：**导出 → 导入后 `preOrders` 逐条还原**（塞 2 张预定单，其中一张 `status: 'received'` 且带 `receivedBatchId`，断言逐字相等）；以及「导入不含 `preOrders` 的旧 JSON → `preOrders: []`」这条**单独用 `toEqual([])` 断一次**（不要只依赖 `not.toThrow`）。
+
+**Steps**
+- [ ] **Step 1**：先写 `normalize.test.ts` 与新增的 `backup.test.ts` 用例（红态：`Cannot find module './normalize'`；`preOrders` 为 `undefined`）。
+- [ ] **Step 2**：改 `src/domain/types.ts`、新建 `src/domain/normalize.ts`、改 `src/state/persistence.ts`、改 `src/storage/backup.ts`。
+- [ ] **Step 3**：`npx vitest run` 全绿；`npm run build`（`tsc -b` 会把所有缺 `preOrders` 的对象字面量报出来——**这就是这一步的主要工作量，不许用 `as any` 或 `@ts-expect-error` 绕开**）；`npm run lint` 0 warning。
+- [ ] **Step 4**：`git add` 显式路径后提交：
+  ```bash
+  git add src/domain/types.ts src/domain/types.test.ts src/domain/normalize.ts src/domain/normalize.test.ts src/state/persistence.ts src/state/persistence.test.ts src/storage/backup.ts src/storage/backup.test.ts
+  git commit -m "feat(domain): 预定单类型与老数据补齐（修订三 D16）"
+  ```
+
+---
+
+### Task 23: 预定单纯函数（阶段推导、提醒计数、排序）与增删改动作
+
+**Goal:** 把「预定单现在处于哪一步」变成一个**纯函数**，并把新增 / 修改 / 取消 / 删除四个动作写进 `actions.ts`（与既有 16 个导出同风格）。界面在 Task 27 才接。
+
+**Files:**
+- Create: `src/domain/preOrders.ts`
+- Create: `src/domain/preOrders.test.ts`
+- Modify: `src/domain/actions.ts`（**只在文件末尾追加**，已有 16 个导出一字不动）
+- Modify: `src/domain/actions.test.ts`
+
+**Interfaces:**
+- Consumes: `AppData` / `PreOrder` / `PreOrderStatus`（Task 22）、`newId`（`src/domain/types.ts:196-199`）、`Money`
+- Produces:
+  ```ts
+  export type PreOrderStage = 'upcoming' | 'due_soon' | 'overdue' | 'received' | 'cancelled'
+  export function preOrderStage(order: PreOrder, today: string, leadDays: number): PreOrderStage
+  export function duePreOrderCount(data: AppData, today: string): number
+  export function preOrderList(data: AppData, today: string): { order: PreOrder; stage: PreOrderStage }[]
+
+  // src/domain/actions.ts 追加
+  export function addPreOrder(data: AppData, input: {
+    sellerName: string; sellerContact: string; expectedCount: number
+    collectDate: string; traits: string; note: string; createdAt: string
+  }): AppData
+  export function updatePreOrder(data: AppData, preOrderId: string, patch: {
+    sellerName?: string; sellerContact?: string; expectedCount?: number
+    collectDate?: string; traits?: string; note?: string
+  }): AppData
+  export function cancelPreOrder(data: AppData, preOrderId: string, reason: string): AppData
+  export function deletePreOrder(data: AppData, preOrderId: string): AppData
+  ```
+
+**必须满足的行为**
+- `preOrderStage` **判定顺序固定**（先命中先返回）：`status === 'cancelled'` → `'cancelled'`；`status === 'received'` → `'received'`；`today > collectDate` → `'overdue'`；`today >= （collectDate 往前推 leadDays 天）` → `'due_soon'`；其余 → `'upcoming'`。
+  - **全用 `'YYYY-MM-DD'` 字符串比较**（同型同长度，字典序就是日期序），**不得把 `collectDate` 塞进 `new Date()`**——那就又回到时区问题。往前推天数自己写一个 `shiftDate(iso, -leadDays)`（`src/domain/quarantine.ts` 里已有同样口径的 `addDays(isoDate: string, days: number): string`，**直接复用那个**，不要新写一份）。
+  - **到日子那天算 `due_soon`（"今天去收"），只有过了那天才算 `overdue`**；`leadDays <= 0` 时只有当天算 `due_soon`。
+  - `collectDate` 不合法（空串、`'不是日期'`）→ 返回 `'upcoming'`，**不许抛错**。
+- `duePreOrderCount` = `due_soon` 与 `overdue` **两态合起来的个数**（设计 §3.9 + §4：界面上两者都显示成「该去收了」）。
+- `preOrderList` 的排序固定：先 `due_soon` / `overdue`（两者合在一起按 `collectDate` 升序），再 `upcoming`（按 `collectDate` 升序），最后 `received` / `cancelled`（按 `createdAt` 降序）。**同一输入两次调用结果必须一致**（相同 `collectDate` 时用 `id` 兜底比较，保证稳定）。
+- `addPreOrder`：`sellerName.trim() === ''`、`expectedCount < 1`、`collectDate.trim() === ''` 任一成立 → **返回同一引用**；否则追加一条 `{ id: newId(), status: 'reserved', receivedCount: 0, receivedBatchId: null, cancelReason: '' }` + 传入字段（`sellerName` 存 `trim()` 后的值）。
+- `updatePreOrder`：找不到 id → 同一引用；`status === 'received'` 时**只有 `patch.note` 生效**，其余键一律忽略（这是白名单，见设计 §3.9 G4——否则用户能把已收货改回「预定中」、绕过守卫再收一次）；`status === 'cancelled'` 时可以改内容但不能改 `status`（`status` 根本不在 patch 类型里）。
+- `cancelPreOrder`：`status !== 'reserved'` → 同一引用；否则写 `status: 'cancelled'` + `cancelReason: reason`（`reason` 为空就存 `''`，界面负责提示）。
+- `deletePreOrder`：找不到 id → 同一引用；`status === 'received'` → 同一引用（它连着批次）；其余物理删除那条。
+- **四个动作全部返回新对象、守卫一律 `return data`（同一引用）、绝不抛错**（Global Constraints）。
+
+**测试要求**（`preOrders.test.ts`）
+- 三个日期边界各一条：`today === collectDate` → `'due_soon'`（不是 `overdue`）；`today === collectDate - leadDays` → `'due_soon'`；`today === collectDate - leadDays - 1` → `'upcoming'`。
+- `today > collectDate` → `'overdue'`；`cancelled` / `received` 优先于日期（哪怕 `collectDate` 早得离谱）。
+- `leadDays = 0`：当天 `due_soon`、昨天 `overdue`。
+- `collectDate: ''` → `'upcoming'` 且不抛。
+- `duePreOrderCount`：一张 `overdue` + 一张 `due_soon` + 一张 `upcoming` → `2`。
+- `preOrderList` 顺序：造 5 张覆盖五种阶段，断言顺序数组（不要用 `expect(...).toEqual(expect.arrayContaining(...))` 这种对顺序无感的写法）。
+- 动作守卫：`expect(addPreOrder(data, 非法)).toBe(data)`（`toBe`，不是 `toEqual`——**钉住"同一引用"这个约定**）；`updatePreOrder` 对已收货只改 `note`（改 `expectedCount` 被忽略）；`cancelPreOrder` 对已收货返回同一引用；`deletePreOrder` 对已收货返回同一引用、对 `reserved` 真的删掉。
+
+**Steps**
+- [ ] **Step 1**：写失败测试（红态：`Cannot find module './preOrders'`、`TypeError: addPreOrder is not a function`）。
+- [ ] **Step 2**：实现 `src/domain/preOrders.ts` 与 `actions.ts` 末尾四个导出。
+- [ ] **Step 3**：`npx vitest run` / `npm run build` / `npm run lint`。
+- [ ] **Step 4**：提交（显式路径）：
+  ```bash
+  git add src/domain/preOrders.ts src/domain/preOrders.test.ts src/domain/actions.ts src/domain/actions.test.ts
+  git commit -m "feat(domain): 预定单阶段推导与增删改动作"
+  ```
+
+---
+
+### Task 24: 收货（`addBatchWithDogs` / `receiveBatch` / `receivePreOrder`）+「算」页按钮改成收货
+
+**Goal:** 建立**全仓唯一的"建批次 + 建狗"实现**，让「预定单收货」与「算页直接收货」走同一条路；同时把「按估算一次性写全部成本」的旧入口删掉（修订三之后没有界面路径需要它）。
+
+**Files:**
+- Modify: `src/domain/planning.ts`（**删除** `createBatchFromPlan`，新增 `addBatchWithDogs` / `receiveBatch`；`plan` / `PlanInput` / 保本价 / 渠道相关的函数**一个字节都不动**）
+- Modify: `src/domain/planning.test.ts`（`describe('createBatchFromPlan')` 的 12 条整体改写成新函数的等价用例）
+- Modify: `src/domain/actions.ts`（追加 `receivePreOrder`）
+- Modify: `src/domain/actions.test.ts`
+- Modify: `src/ui/pages/CalculatePage.tsx`（底部按钮改为「收货」，弹窗只问两个数）
+
+**Interfaces:**
+- Consumes: `newId`、`Dog` / `Batch` 的必填字段（修订二那 6 个检疫字段与 `plannedChannel`）、`ChannelId`
+- Produces:
+  ```ts
+  // src/domain/planning.ts
+  export function addBatchWithDogs(data: AppData, input: {
+    name: string; date: string; count: number; unitPriceFen: Money
+    channel: ChannelId; source: string; note: string
+  }): { data: AppData; batchId: string | null }
+  export function receiveBatch(data: AppData, input: {
+    name: string; date: string; count: number; unitPriceFen: Money; channel: ChannelId
+  }): AppData
+  // src/domain/actions.ts
+  export function receivePreOrder(data: AppData, preOrderId: string, input: {
+    name: string; date: string; receivedCount: number; unitPriceFen: Money
+  }): AppData
+  ```
+- 删除：`createBatchFromPlan`（`src/domain/planning.ts:78-134`）、`CalculatePage.tsx:117` 的调用。
+
+**必须满足的行为**
+- `addBatchWithDogs` 是**建批次与狗号的唯一实现**：`count < 1` → `{ data, batchId: null }`（**同一引用**，不建任何东西）；否则新建 1 个 `Batch`（`id: newId()`、`status: 'active'`、`plannedChannel: input.channel`、`source`、`note`）与 `count` 只 `Dog`：`id: newId()`、`code: \`${input.name}-${序号}\``（**序号从 1 开始**，与既有 `planning.ts:105` 逐字一致）、`batchId`、`status: 'in_stock'`、6 个检疫字段 `null / null / '' / '' / null / null`。
+- **收购款只在单价 > 0 时写**（与既有 `planning.ts:116-118` 的 `if (input.purchasePrice > 0)` 同口径）：每只狗一笔 `type: 'expense'`、`category: 'purchase'`、`amount: Math.max(0, Math.round(input.unitPriceFen))`、`paidBy: 'pool'`、`batchId`、`dogId`、`date`。**单价 0 就一笔都不写**（不是写 0 元流水）。
+- `addBatchWithDogs` **只写收购款那一类流水**：运输 / 疫苗 / 检疫 / 处理费**一概不在这里写**（那是 Task 25 的 `addBatchCosts`）。这一条是本任务的中心——「先做后补账」（D14）就落在这里。
+- `receiveBatch` = 用 `source: ''`、`note: ''` 调 `addBatchWithDogs` 并取 `.data`。
+- `receivePreOrder` 一次 update 原子做完四件事（**必须是同一次 `update`，不许分成两次**）：
+  1. 调 `addBatchWithDogs` 建批次与狗、记收购款（`name` / `date` 由调用方传入，`channel: 'undecided'`）；
+  2. **把卖家与留痕写进批次**：`source: order.sellerName`；`note: \`来自预定单：${order.sellerName}\``，并在 `receivedCount !== expectedCount` 时追加 `；比约定的${少|多} ${差额} 只`（差额 = `Math.abs(expectedCount - receivedCount)`）；
+  3. 预定单写 `status: 'received'`、`receivedCount`、`receivedBatchId`；
+  4. 其余数据不动。
+- `receivePreOrder` 守卫：找不到 id、`status !== 'reserved'`、`receivedCount < 1` 任一成立 → **返回同一引用**。
+- **`domain/` 里不许出现无参 `new Date()`**：`name`（形如 `收狗 6 只 14:30`）与 `date` 都由界面算好传进来（`localTimeHm(new Date())` 在 `src/ui/planForm.ts:54-66`、`todayLocalIso(new Date())` 在 `:47`）。
+- `CalculatePage.tsx`：底部按钮文案从「就按这个收」改成「**收货**」；点了之后弹一个**只有两个字段**的弹窗——实收只数（默认表单里的 `n`）与每只收购价（默认表单里的值）——确认后调 `receiveBatch`（`name` 用 `收狗 N 只 HH:MM`，`N` 是**实收只数**，`date` 用 `todayIso()`，`channel: selectedChannel`）。`new Date()` 必须留在事件处理器里（Task 21 的 `handleCreateBatch` 已经这么做，`CalculatePage.tsx:112`）。成功文案里保留去向（Task 18b 加的那行）。**估算出来的运输 / 疫苗 / 检疫 / 处理费一个字都不要写进账**——它们只是保本价的输入。
+
+**测试要求**
+- `planning.test.ts`：把 `describe('createBatchFromPlan')` 的 12 条改写成 `addBatchWithDogs` / `receiveBatch` 的等价用例，其中**必须保留**这几条语义：只数 0 → 不建批次（`batchId === null`）、狗号逐字形如 `收狗 3 只 09:10-1`、每只狗一笔 purchase、单价 0 一笔都不写、6 个检疫字段都是空值、`plannedChannel` 落对。原来钉「17 笔」「8 笔 quarantine」「只数 0 只记运输」的那三条**改由 Task 25 的 `addBatchCosts` 测试承担**（笔数口径不变，只是搬到新函数上）。
+- `actions.test.ts` 的 `receivePreOrder`：
+  - 收货原子性：一次调用后 `batches.length +1`、`dogs.length + receivedCount`、该批 `purchase` 流水恰好 `receivedCount` 笔、预定单 `status === 'received'` 且 `receivedBatchId` 指向新批次、`receivedCount` 落对。
+  - 留痕逐字：`expectedCount: 4 / receivedCount: 2` → `note === '来自预定单：老李家；比约定的少 2 只'`；相等时**不出现**「比约定」字样；多收时写「多」。
+  - 守卫：非 `reserved`（`received` 与 `cancelled` 各一条）、`receivedCount: 0`、不存在的 id → 全部 `toBe(data)`。
+  - 收货**不改**该批次以外的任何数据（`dogs` 里其他批次狗的 `batchId` 逐字不变）。
+
+**Steps**
+- [ ] **Step 1**：先改 `planning.test.ts`（红态：`createBatchFromPlan is not a function` / `addBatchWithDogs is not a function`）。
+- [ ] **Step 2**：改 `src/domain/planning.ts`、`src/domain/actions.ts`、`src/ui/pages/CalculatePage.tsx`。
+- [ ] **Step 3**：`npx vitest run` / `npm run build` / `npm run lint` / `git status --short`。
+- [ ] **Step 4**：提交：
+  ```bash
+  git add src/domain/planning.ts src/domain/planning.test.ts src/domain/actions.ts src/domain/actions.test.ts src/ui/pages/CalculatePage.tsx
+  git commit -m "feat: 收货只记收购款（先做后补账，修订三 D14）"
+  ```
+
+---
+
+### Task 25: 补账表纯函数（`addBatchCosts` / `previewBatchCosts` / `batchCostsIncomplete`）
+
+**Goal:** 把「回来之后把这一批的成本一次补进去」变成三个纯函数。**成本算法仍然只有 `costing.ts` 一处**——这里只负责"按只数生成几笔流水"。
+
+**Files:**
+- Create: `src/domain/batchCosts.ts`
+- Create: `src/domain/batchCosts.test.ts`
+
+**Interfaces:**
+- Consumes: `dogsOfBatch`（`src/domain/costing.ts:3-5`）、`batchTotalCost`（`:15-19`，**只按 `type === 'expense' && batchId` 过滤、含收购款**）、`newId`、`Money`
+- Produces:
+  ```ts
+  export function batchCostsIncomplete(data: AppData, batchId: string): boolean
+  export function addBatchCosts(data: AppData, input: {
+    batchId: string; date: string; transportFen: Money
+    medicalPerDogFen: Money; quarantinePerDogFen: Money; disposalPerDogFen: Money
+  }): AppData
+  export function previewBatchCosts(data: AppData, input: {
+    batchId: string; transportFen: Money
+    medicalPerDogFen: Money; quarantinePerDogFen: Money; disposalPerDogFen: Money
+  }): { count: number; totalFen: Money }
+  ```
+
+**必须满足的行为**
+- `batchCostsIncomplete(data, batchId)` = `!data.entries.some(e => e.type === 'expense' && e.batchId === batchId && e.category !== 'purchase')`。**不能**用 `batchTotalCost(data, batchId) === 0` 代替（那个含收购款，新建批次刚收完货就 > 0，永远判不出"还没补成本"）。
+- `addBatchCosts` 一次 update 追加四类流水，**一律 `type: 'expense'`、`paidBy: 'pool'`、`batchId`、`date: input.date`**：
+  | 类别 | 笔数 | `dogId` |
+  |---|---|---|
+  | `transport`（运输 + 笼具） | **1 笔**（整批） | `null` |
+  | `medical`（疫苗驱虫医疗） | **这一批全部狗**，每只一笔 | 各狗 `id` |
+  | `quarantine`（检疫（抗体检测 + 申报）） | **这一批全部狗**，每只一笔 | 各狗 `id` |
+  | `disposal`（病死犬无害化处理） | **点击那一刻已标死亡（`status === 'dead'`）的只数**，每只一笔 | 各死狗 `id` |
+  - "全部狗"用 `dogsOfBatch(data, batchId)` **不过滤状态**（卖掉的、退回的、死了的都算打过疫苗——这是用户口径，设计 §3.10）。
+  - **填 0 的那一行一笔都不写**（与 `planning.ts:98/116/119/123` 的既有约定一致）。四行全 0 → 什么都不追加，返回**新对象**（无变化就返回同一引用也可以，但**必须**保证不产生任何流水）。
+  - **只新增，不替换**：不得删除或改写任何既有流水（要与既有手记的支出共存——这条要有测试）。
+  - 找不到 `batchId` → 返回同一引用。
+- `previewBatchCosts`：`count` 与 `totalFen` **只算这一次要新增的四行**（不含已记成本、不含收购款），逻辑与 `addBatchCosts` 的笔数口径**逐字一致**（实现上让 `addBatchCosts` 调它来做校验或共用同一个内部函数，避免两套笔数算法）。**`totalFen` 是四行金额按各自笔数相乘后的和**：`transportFen + 全部狗数 × medicalPerDogFen + 全部狗数 × quarantinePerDogFen + 死狗数 × disposalPerDogFen`。
+
+**测试要求**（`batchCosts.test.ts`）
+- 8 只狗 2 只死：`addBatchCosts` 传入四个正数 → 追加 **1 + 8 + 8 + 2 = 19 笔**；逐类按 `category` 数一遍（不要只数总数——总数 19 在"medical 8 + quarantine 8 + 别的 3"这种错法下也可能成立）。
+- 只填运输 → 只 1 笔；四行全 0 → 一笔都不新增。
+- **与手记的支出共存**：先在 `data.entries` 里放一笔用户自己记的该批 `expense`（`category: 'other'`），补完账后那笔**逐字还在**，且总笔数只多不少。
+- `disposal` 按"点击那一刻"取快照：补账后把一只狗标 `dead` 再补一次 `disposal` → 只新增 1 笔（旧的 2 笔不动）。**"不自动追溯"是刻意的**，这条测试就是它的说明。
+- `batchCostsIncomplete`：新建批次（只有 `purchase` 流水）→ `true`；补一笔 `transport` → `false`；只有一笔手记的非 purchase 支出 → `false`（用户记了账就不再挂橙字）。
+- `previewBatchCosts` 的 `count` / `totalFen` 与 `addBatchCosts` 实际新增的笔数与金额**逐字相等**（同一条 fixture 跑两遍对比）。
+- 找不到 `batchId` → `toBe(data)`。
+
+**Steps**
+- [ ] **Step 1**：写失败测试（红态：`Cannot find module './batchCosts'`）。
+- [ ] **Step 2**：实现 `src/domain/batchCosts.ts`。
+- [ ] **Step 3**：`npx vitest run` / `npm run build` / `npm run lint`。
+- [ ] **Step 4**：提交：
+  ```bash
+  git add src/domain/batchCosts.ts src/domain/batchCosts.test.ts
+  git commit -m "feat(domain): 补账表（只新增不替换）"
+  ```
+
+---
+
+### Task 26: 流水纠错纯函数（`updateEntry` / `deleteEntry`）
+
+**Goal:** 让用户能改一笔账、删一笔账。**这是第一次让 `entries` 不再只能追加**，所以连带规则必须由测试钉死。
+
+**Files:**
+- Modify: `src/domain/actions.ts`（末尾追加两个导出）
+- Modify: `src/domain/actions.test.ts`
+
+**Interfaces:**
+- Produces:
+  ```ts
+  export function updateEntry(data: AppData, entryId: string, patch: {
+    amount?: Money; date?: string; note?: string
+    paidBy?: 'pool' | string; category?: string
+  }): AppData
+  export function deleteEntry(data: AppData, entryId: string): AppData
+  ```
+- **刻意不提供**的键：`type` / `id` / `batchId` / `dogId`（类型上就不给，用户改不了"这笔账属于谁"）。
+
+**必须满足的行为**
+- `updateEntry`：找不到 id → 同一引用。`amount` 有值时 `Math.max(0, Math.round(patch.amount))`（**0 合法、负数夹到 0**，与 `addExpense` / `sellDog` / `transferEntry` 一字不差）。`category` **只对 `type === 'expense'` 生效**：非 `expense` 的流水即使 patch 里带了 `category` 也**原样不动**（`income` 的 `'sale'`、转账类的 `'transfer'` 不能被改成别的）。`patch` 里的每个字段**只有真正不同**才写进去；**没有任何字段实际变化时返回同一引用**（界面上"什么都没改就点保存"不该产生一次写库）。
+- `deleteEntry`：找不到 id → 同一引用；否则物理删除那一笔，并且**在同一次更新里**处理连带：
+  - 被删的是 `type === 'income'` 且 `dogId` 非空，**并且它是该狗数组里最后一条 `income`**（用与 `src/ui/dogLedger.ts:24-28` 相同的"数组下标扫描"口径判定：该狗所有 `income` 中下标最大的那条就是这个 id）→ 把该狗 `status` 改回 `'in_stock'`。
+  - **不是最后一条**（可达路径：卖 → 退款把狗变 `returned` → `isOnHand` 让「卖出」按钮重现 → 又卖一次，同一 dogId 两条 `income`）→ **狗的状态一个字节都不许动**。
+  - 删任何其他流水（支出、退款、注资、分红、报销、散收入）→ **不改任何狗状态**（退款流水不是"狗在哪"的决定者）。
+- `src/ui/dogLedger.ts` 的 `lastSaleIndex` / `refundedCurrentSale` **不要动**：它们的数组下标口径在物理删除下依然正确（删掉退款那笔，`some(i > saleIdx)` 自然变 `false`），而**改成按 `date` 会打挂 `dogLedger.test.ts:62-68`** 那条「卖 → 退款 → 又卖出（同日）」的既有回归。这是那轮审查的复核结论，不要再"顺手改好"。
+
+**测试要求**
+- 改金额：改成 0 合法、负数夹到 0；改完之后 `poolBalance` / `batchSummary` 这些派生值跟着变（用 `src/domain/ledger.ts` 的 `poolBalance` 与 `costing.ts` 的 `batchTotalCost` 断言一次，证明"余额是现算的"）。
+- 改 `date` / `note` / `paidBy`；改 `expense` 的 `category` 生效；**`income` 带 `category` 被忽略**（逐字断言 `category` 仍是 `'sale'`）。
+- `type` / `id` / `batchId` / `dogId` 在 `updateEntry` 之后**逐字不变**。
+- 无变化的 patch → `toBe(data)`。
+- 删销售流水（该狗只有这一条 `income`）→ 狗回 `'in_stock'`，其余狗状态不变。
+- **「卖 → 退款（狗变 `returned`）→ 又卖一次」之后删掉更早那条 `income` → 狗状态不变**（这是 C3 的核心用例，别省）。
+- 删退款流水 → 狗状态不变、`refundedCurrentSale` 变 `false`（在 `dogLedger.test.ts` 里用既有的 `sale` / `refund` 辅助函数补一条，证明删掉之后界面不会继续显示「已记退款」）。
+- 删注资 / 分红 / 报销 / 支出 → 任何狗状态都不变。
+- 不存在的 id → `toBe(data)`。
+
+**Steps**
+- [ ] **Step 1**：写失败测试（红态：`TypeError: updateEntry is not a function`、`deleteEntry` 同理）。
+- [ ] **Step 2**：实现两个导出（放在 `actions.ts` 末尾，`renameBatch` 之后）。
+- [ ] **Step 3**：`npx vitest run` / `npm run build` / `npm run lint`。
+- [ ] **Step 4**：提交：
+  ```bash
+  git add src/domain/actions.ts src/domain/actions.test.ts src/ui/dogLedger.test.ts
+  git commit -m "feat(domain): 流水可改可删（含删销售流水的连带规则）"
+  ```
+
+---
+
+### Task 27: 预定单界面（「狗」页顶部的预定单区）
+
+**Goal:** 让用户能记下一张预定单、看到"该去收了"、点一下收货。位置固定在**「狗」页列表视图顶部**（`DogsPage.tsx` 列表视图内、`<ul className="mt-4 space-y-2">` 之前——也就是 `:125` 之前），**不新增第 6 个标签**。
+
+**Files:**
+- Create: `src/ui/preOrderForm.ts`
+- Create: `src/ui/preOrderForm.test.ts`
+- Modify: `src/ui/pages/DogsPage.tsx`
+
+**Interfaces:**
+- Consumes: `preOrderList` / `duePreOrderCount` / `preOrderStage`（Task 23）、`addPreOrder` / `updatePreOrder` / `cancelPreOrder` / `deletePreOrder`（Task 23）、`receivePreOrder`（Task 24）、`useAppData`、`todayLocalIso`（`src/ui/planForm.ts:47`）、`localTimeHm`（`:54-66`）、`parseAliveInput`（`src/ui/channelView.ts:135`，**空串 → `null`**，正好用于"只数"字段）
+- Produces: `src/ui/preOrderForm.ts` 里的纯函数（表单校验与草稿 → 动作入参的转换），例如：
+  ```ts
+  export interface PreOrderDraft { sellerName: string; sellerContact: string; expectedCount: string; collectDate: string; traits: string; note: string }
+  export function canSubmitPreOrder(draft: PreOrderDraft): boolean
+  export function draftIssue(draft: PreOrderDraft): string | null   // 返回中文红字，null = 没问题
+  ```
+
+**必须满足的行为**
+- 顶部区块（列表视图内、批次列表之前）：
+  - 一行标题「预定单」+ 一个「+ 记一张」按钮（展开新建表单）。
+  - `duePreOrderCount(data, today) > 0` 时，标题下挂一条醒目提醒：**「有 N 张该去收了」**（橙/红字，与既有 `text-red-500` / `text-emerald-600` 的配色体例一致）。
+  - 卡片列表严格按 `preOrderList(data, today)` 的顺序渲染，每张卡显示：卖家名、`约 ${expectedCount} 只`、`${collectDate} 去收`、一个阶段标签（`upcoming`「还没到日子」/ `due_soon` 与 `overdue` 都显示「**该去收了**」、`received`「已收货」、`cancelled`「黄了」+ 原因）。
+  - 没有预定单时**不渲染整块**（与「报」页空态的处理一致：空时不占位置），而不是显示一个空标题。
+- 每张卡的动作：
+  - `reserved`（`upcoming` / `due_soon` / `overdue`）：**「收货」「改」「黄了」**三个按钮。`overdue` 时「收货」用主色突出。
+  - `received`：只显示「已收货」与批次名（可点进那个批次）+「改备注」（**只有 `note` 可改**）。
+  - `cancelled`：只显示原因 +「删掉」。
+- 新建 / 修改表单（6 个字段：卖家、联系方式、约几只、约好哪天、特征、备注）：`type="date"` 用**原生日期输入**（与检疫页一致），只数与 `parseAliveInput` 同口径（空或非法 → 红字、按钮禁用）；提交前调 `canSubmitPreOrder` / `draftIssue`。
+- 收货弹窗**只有两个字段**：实收只数（默认 `expectedCount`）、每只收购价（默认空）。确认 → `receivePreOrder(data, id, { name, date, receivedCount, unitPriceFen })`，其中 `name = \`收狗 ${receivedCount} 只 ${localTimeHm(new Date())}\``、`date = todayIso()`、`unitPriceFen = parseMoney(...)`；这三个都由**事件处理器**算（渲染体里不许 `new Date()`）。成功后显示「已收货，批次：{name}」。
+- 「黄了」弹窗：一个原因输入（可空，但空时给中性提示「不写原因也行，以后自己看得懂就行」）→ `cancelPreOrder`。
+- 删除：二次确认（`window.confirm` 与既有删除入口保持同一体例）→ `deletePreOrder`；**已收货的卡片没有删除按钮**。
+- 表单状态（草稿）**不得跨卡片残留**：Task 21b 那个"草稿串台"的缺陷在这里同样会犯——打开另一张卡或收起表单时必须重置草稿；把理由写进 state 的注释里。
+
+**测试要求**（`preOrderForm.test.ts`）
+- `draftIssue`：卖家名为空 → 红字；只数为空 / `'abc'` / `'0'` / `'1.5'` → 红字；日期为空 → 红字；全部合法 → `null`。
+- `canSubmitPreOrder` 与 `draftIssue` **同一个判定**（用同一组输入断言两者一致——避免出现"按钮亮着但点了出红字"或反过来）。
+- 只数用 `parseAliveInput` 的口径：`'3'` → 3、`' 3 '` → 3、`''` → `null`、`'0'` → 0（0 是合法整数，但 `canSubmitPreOrder` 因为 `expectedCount < 1` 仍然为 `false`——**这两件事都要有测试**）。
+
+**Steps**
+- [ ] **Step 1**：写 `preOrderForm.test.ts` 与实现（这部分与界面无关，可以先红后绿）。
+- [ ] **Step 2**：改 `src/ui/pages/DogsPage.tsx`（只加列表视图内的预定单区，**详情视图不碰**）。
+- [ ] **Step 3**：`npx vitest run` / `npm run build` / `npm run lint`（注意 `noUnusedLocals`：`preOrderStage` 之类没用到的符号不要 import）。
+- [ ] **Step 4**：提交：
+  ```bash
+  git add src/ui/preOrderForm.ts src/ui/preOrderForm.test.ts src/ui/pages/DogsPage.tsx
+  git commit -m "feat(ui): 预定单区（记单、提醒、收货、黄了）"
+  ```
+
+---
+
+### Task 28: 批次详情——补账表 + 卖家与留痕 + 「还没补成本」橙字
+
+**Goal:** 让用户收完狗回来，能在批次详情页一屏把这一批的成本补齐；并且**看得见**卖家是谁、比约定的少了没有。
+
+**Files:**
+- Create: `src/ui/batchCostsForm.ts`
+- Create: `src/ui/batchCostsForm.test.ts`
+- Modify: `src/ui/pages/DogsPage.tsx`（详情视图）
+
+**Interfaces:**
+- Consumes: `addBatchCosts` / `previewBatchCosts` / `batchCostsIncomplete`（Task 25）、`batchTotalCost`（`src/domain/costing.ts:15-19`）、`parseMoney`（`src/domain/money.ts`）、`useAppData`、`todayLocalIso`
+- Produces: `src/ui/batchCostsForm.ts` 里的纯函数（四行金额的解析、预览文案、提交入参），例如：
+  ```ts
+  export interface BatchCostDraft { transport: string; medicalPerDog: string; quarantinePerDog: string; disposalPerDog: string }
+  export function draftToAmounts(draft: BatchCostDraft): { transportFen: Money; medicalPerDogFen: Money; quarantinePerDogFen: Money; disposalPerDogFen: Money }
+  export function batchCostDraftIssue(draft: BatchCostDraft): string | null
+  export function previewText(count: number, totalFen: Money): string   // 「将新增 19 笔，合计 ¥1,234.00」
+  ```
+
+**必须满足的行为**
+- 详情视图底部加一个**默认折叠**的「补成本」区块（折叠体例与「算」页的渠道对照一致）。
+- 四行输入（标签逐字）：**运输 + 笼具（整批一笔）**、**每只疫苗 / 驱虫 / 医疗**、**每只检疫（抗体检测 + 申报）**、**每只病死犬处理费**（后三个是"每只单价"，标签里必须写出"每只"，否则用户会当成总额）。
+- 区块里常显一行：「**这一批已记成本 ¥X · 共 N 笔（含收购款）**」，其中 ¥X = `batchTotalCost(data, batchId)`、N = 该批 `expense` 流水的条数（**两者都含收购款**，设计 §3.10 已写死口径）。
+- `batchCostsIncomplete(data, batchId)` 为 `true` 时，区块标题旁挂一行橙字：「**这一批还没补成本，保本价现在是偏低的**」（这是设计里那句话，逐字用）。
+- 提交按钮文案带笔数与金额：用 `previewBatchCosts` 实时算（"将新增 19 笔 · ¥1,234.00"）；**点之前弹一次确认**（`window.confirm`，文案含笔数与金额），确认后才调 `addBatchCosts`。四行全 0 或全部非法 → 按钮禁用。
+- 金额输入一律走 `parseMoney`；非法 → 行内红字 + 按钮禁用；**空 = 0**（"不补这一项"与"这项是 0"在账上等价——因为填 0 本来就不写流水）。
+- 详情**头部**渲染 `batch.source`（卖家）与 `batch.note`（留痕）：`source` 非空时显示「卖家：老李家」，`note` 非空时显示在下面一行小字（此前 `Batch.note` 全仓没有任何渲染点，这次必须渲染出来，否则「来自预定单」「比约定的少 2 只」这些留痕用户根本看不到）。
+- 补账**绝不删改**任何既有流水（Task 25 已保证，界面也不许自己"先清后写"）。
+
+**测试要求**（`batchCostsForm.test.ts`）
+- `draftToAmounts`：四个空串 → 四个 0；`'1,200'` → `120000`（`parseMoney` 的口径）；非法 → 由 `batchCostDraftIssue` 给红字。
+- `batchCostDraftIssue`：`'abc'` → 红字；全空 → `null`（合法，只是不补）；负数 → 红字。
+- `previewText(19, 123400)` → 逐字断言（含中文顿号与 `¥` 写法，与既有 `formatMoney` 输出一致——**用 `formatMoney` 拼，不要自己写货币格式**）。
+- 四行全 0 时"能不能提交"的判定与 `previewBatchCosts().count === 0` 一致。
+
+**Steps**
+- [ ] **Step 1**：写 `batchCostsForm.test.ts` 与实现。
+- [ ] **Step 2**：改 `src/ui/pages/DogsPage.tsx` 详情视图（补成本区块 + 头部渲染卖家与留痕）。
+- [ ] **Step 3**：`npx vitest run` / `npm run build` / `npm run lint`；手动在 `npm run dev` 里点一遍（不要求真机）。
+- [ ] **Step 4**：提交：
+  ```bash
+  git add src/ui/batchCostsForm.ts src/ui/batchCostsForm.test.ts src/ui/pages/DogsPage.tsx
+  git commit -m "feat(ui): 批次详情补成本与留痕渲染"
+  ```
+
+---
+
+### Task 29: 「钱」页——每笔都能改能删 + 「显示全部」
+
+**Goal:** 用户发现记错一笔的时候，能就地改掉或删掉，而不是只能再记一笔抵消。
+
+**Files:**
+- Create: `src/ui/entryForm.ts`
+- Create: `src/ui/entryForm.test.ts`
+- Modify: `src/ui/pages/MoneyPage.tsx`
+
+**Interfaces:**
+- Consumes: `updateEntry` / `deleteEntry`（Task 26）、`entryLabel` / `catLabel` / `partnerName` / `canSubmit`（`src/ui/moneyBook.ts`）、`parseMoney`、`amountInvalid`（`src/ui/moneyBook.ts`）、`useAppData`
+- Produces: `src/ui/entryForm.ts` 里的纯函数：
+  ```ts
+  export interface EntryDraft { amount: string; date: string; note: string; paidBy: 'pool' | string; category: string }
+  export function entryPatch(entry: LedgerEntry, draft: EntryDraft): { amount?: Money; date?: string; note?: string; paidBy?: string; category?: string }
+  export function entryDraftIssue(entry: LedgerEntry, draft: EntryDraft): string | null
+  export function deleteWarning(data: AppData, entry: LedgerEntry): string   // 删除确认弹窗的正文
+  export function entryScope(data: AppData, entry: LedgerEntry): string      // 「狗 收狗 3 只 09:10-2」/「批次 收狗 3 只 09:10」/「—」
+  ```
+
+**必须满足的行为**
+- 每行流水加「改」「删」两个小按钮（体例与既有 `DogsPage` 卡片上的小按钮一致，不要做成大按钮挤掉金额）。
+- 「改」打开弹窗（**复用既有 `src/ui/components/Modal.tsx`**），字段：金额、日期、备注、经手人（`pool` / 两位合伙人）、**支出类别（只有 `expense` 显示这一项）**。确认 → `updateEntry(data, id, entryPatch(...))`。
+  - 金额空 / 非法 → 红字 + 按钮禁用；**0 合法**（与新增路径一致）。
+  - 「什么都没改就点保存」时 `entryPatch` 返回空对象、`updateEntry` 返回同一引用、界面直接关弹窗。
+- 「删」弹窗正文由 `deleteWarning` 生成，**必须覆盖这四种情形**（设计 §3.11 G5）：
+  - 删的是带狗的销售流水（`type === 'income'`）→ 写明「**这只狗会回到在库**」（并且若它是该狗最后一条销售流水才真的回退——文案与 Task 26 的规则一致，别写反）。
+  - 该狗还挂着退款支出（`refundedCurrentSale` 为 `true`）→ 追加「那笔退款从此在界面上对不上任何一只狗，请自己去核一下」。
+  - 删的是退款流水（`category === 'aftercare_refund'`）→ 写明「删掉之后那只狗会重新出现『退款』按钮，别对同一只狗再退一次」。
+  - 其余 → 一般性「这笔账会被永久删除，没有撤销」，并写明它挂在哪只狗 / 哪个批次。
+- 每行第二行显示挂靠：`entryScope` 用狗的 `code` 与批次名解析（`batchId` → `batches` 里的 `name`；`dogId` → `dogs` 里的 `code`）。**批次改名不追溯狗号**，所以狗号与批次名可能不一致——**这是预期的**，不要"修正"它，解析不到就显示 `—`。
+- 列表底部：`data.entries.length > 60` 时显示「**还有 N 笔更早的 · 显示全部**」按钮，点开渲染全部（倒序）；`N = data.entries.length - 60`。不做分页。
+
+**测试要求**（`entryForm.test.ts`）
+- `entryPatch` **只带真正改动的键**：金额从 `'50'` 改成 `'50'` → 空对象；`'50'` → `'60'` → `{ amount: 6000 }`；同时改日期与备注 → 两个键。
+- `entryPatch` 对 `income` 的草稿里带 `category` → 生成的 patch **不含** `category`（护栏在域层，界面也不主动送）。
+- `entryDraftIssue`：金额 `'abc'` → 红字；`'0'` → `null`（0 合法）；负号 → 红字。
+- `deleteWarning` 四种情形各一条，**逐字断言关键字**（「回到在库」「对不上任何一只狗」「别对同一只狗再退一次」「没有撤销」），并且断言"普通支出"不会误报成销售流水。
+- `entryScope`：三情形（挂狗、挂批次、都不挂）与"批次改名后狗号不变、批次名变新名"。
+
+**Steps**
+- [ ] **Step 1**：写 `entryForm.test.ts` 与实现。
+- [ ] **Step 2**：改 `src/ui/pages/MoneyPage.tsx`（行内按钮、两个弹窗、显示全部）。
+- [ ] **Step 3**：`npx vitest run` / `npm run build` / `npm run lint`。
+- [ ] **Step 4**：提交：
+  ```bash
+  git add src/ui/entryForm.ts src/ui/entryForm.test.ts src/ui/pages/MoneyPage.tsx
+  git commit -m "feat(ui): 流水就地改与删、显示全部"
+  ```
+
+---
+
+### Task 30: 收尾——文档同步、真机走查、重新上线
+
+**Goal:** 把修订三送到用户手上：文档说清楚、真机走一遍（含老数据不被打坏）、重新构建并推上去。**这一条与 `### Task 14` 不重复**：Task 14 的产物（备份横幅、备份面板、manifest、图标、`DEPLOY.md`）第一版已经上线，这里只做"改完之后再发一次"。
+
+**Files:**
+- Modify: `README.md`（功能一句话里补上「预定单」「先做后补账」「流水能改能删」；若已经有"五个标签页"的说明，**不要改数字**——预定单在「狗」页里）
+- Modify: `docs/superpowers/specs/2026-10-02-dog-trading-ledger-design.md`（只在发现实现与设计不符时才改，改之前先报告）
+- 台账：`.superpowers/sdd/2026-10-02-dog-ledger/progress.md`（被 `.gitignore:27` 忽略，不进 git）
+
+**必须满足的行为**
+- 三条门禁原样贴进报告：`npx vitest run`、`npm run build`、`npm run lint`，外加 `git status --short` 为空。
+- **真机走查由控制器用 CDP 探针做**（与 Task 20 / 21 同一套骨架：`npx vite preview --port 5199 --strictPort` 后台作业 + 探针脚本 + 真实 IndexedDB），至少覆盖：
+  1. **老数据不被打坏**：往 IndexedDB 里写一个**不含 `preOrders`、不含 `preOrderLeadDays`** 的旧 `AppData` → 刷新 → 五个标签页都能打开、「狗」页不空白、「报」页照常出数字。
+  2. **导出 → 清空 → 导入**：导出后含预定单（写进文件里核对一次），清站点数据后导入，**预定单逐条还原**（这条专门钉住 `preOrders: data.preOrders ?? []` 那个陷阱）。
+  3. 记一张预定单 → 改日期到"今天" → 顶部出现「有 1 张该去收了」→ 收货（实收只数比约定的少 1）→ 批次详情里卖家与「比约定的少 1 只」都看得到。
+  4. 批次详情「补成本」：四行填数 → 确认弹窗笔数正确 → 补完后「这一批已记成本」数字与笔数都变、橙字消失。
+  5. 「钱」页：改一笔金额 → 对账单与分账跟着变；删一笔销售流水 → 那只狗回到在库；「显示全部」在超过 60 笔时出现且能展开。
+  - 0 条 `Runtime.exceptionThrown`、0 条 `console.error`。
+- **重新上线**：`npm run build` → `git push origin master` → 产物推 `gh-pages`（`DEPLOY.md` 里的既有流程）；推送若被 GitHub 间歇阻断就重试。线上地址不变。**推之前先确认走查全绿**——用户的真实数据就在这个站上。
+- 报告里必须写明：本次改动对上线的哪个提交、线上站址、走查 N/N、以及"老备份能否恢复"的实测结论。
+
+**Steps**
+- [ ] **Step 1**：改 `README.md`（只补功能说明，不重写）。
+- [ ] **Step 2**：跑三条门禁，贴原文。
+- [ ] **Step 3**：控制器跑 CDP 走查（探针归档到 `.superpowers/sdd/2026-10-02-dog-ledger/probes/`）。
+- [ ] **Step 4**：提交 README：`git add README.md` → `git commit -m "docs: README 补预定单与补账说明"`。
+- [ ] **Step 5**：推送 `master` 与 `gh-pages`，验证线上地址可用（打开、五个标签、旧数据在）。
+
+---
+
 ### Task 14: 备份安全网 + PWA + 上线
+
+> **状态（2026-10-03）**：本任务**已在第一版落地并上线**（GitHub Pages）。上面 Task 22–30 是修订三的实施任务，它们结束之后由 Task 30 负责重新构建与推送；本任务的步骤与验收标准保持原样，作为"如果将来要重做一遍"的参考与验收依据。
 
 **Files:**
 - Create: `src/ui/backupStatus.ts`（Step 3 写的两个纯函数）
