@@ -15,11 +15,14 @@ import { parseAliveInput } from './channelView'
  * 2. **只数的口径与「存活数」完全一致**（`parseAliveInput`，只认 `\d+`、空串 → `null`）。
  *    域层 `receivePreOrder` 的守卫是**原样返回同一引用**：只数不合法它什么都不做，
  *    界面上就是「点了确认但没反应」。所以「拦」必须发生在界面这一层，不能指望域层报错。
- * 3. **改单这条路域层不 trim**。`addPreOrder` 会把 `sellerName` / `collectDate` 存成
- *    trim 后的值，而 `updatePreOrder` 是照原样存 —— 它俩一个字段、两种存法。
- *    `sellerName` 与 `collectDate` 会被拿去排序和比日期，前后带空格的
- *    `' 2026-10-20 '` 会让字典序比较静默失效（「界面看着正常、提醒就是不来」）。
- *    于是 trim 放在这里做，新建与修改共用同一条路。
+ * 3. **`sellerName` 与 `collectDate` 在域层存的就是 trim 后的值**（`addPreOrder` 与
+ *    `updatePreOrder` 两条路都 trim 这两个键，其余四个键一律原样存）。这两个字段会被
+ *    拿去排序和比日期，前后带空格的 `' 2026-10-20 '` 会让字典序比较静默失效
+ *    （「界面看着正常、提醒就是不来」）。这一层也 trim，是为了让用户敲进来的空格当场
+ *    就看不见，而不是等写库时才被域层悄悄洗掉；**域层仍然自己 trim 一遍**，
+ *    界面层不是那唯一的防线。
+ *    历史注：Task 23c 之前 `updatePreOrder` 是不 trim 的，这条注释当时写的是
+ *    「改单这条路域层不 trim」—— 那句话已经过期。
  */
 
 /** 预定单表单在界面上是 6 个字符串（与 `PlanTextForm` 同一体例）。 */
