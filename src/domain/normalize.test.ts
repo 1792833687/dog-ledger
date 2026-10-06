@@ -57,6 +57,16 @@ describe('normalizeAppData', () => {
     expect(normalizeAppData({ settings: null }).settings).toEqual(DEFAULT_SETTINGS)
   })
 
+  // costItems 与 partners 的回落口径**不同**，与 importBackup 的白名单逐字一致：
+  // 本仓没有删除成本项的入口，costItems 为空只可能是手改或坏数据，透传下去会让
+  // 记账时的支出类别下拉变成零个选项；而合伙人清空是一种真实状态，要原样保留。
+  it('costItems 空数组回落内置项，partners 空数组原样保留', () => {
+    const normalized = normalizeAppData({ settings: { costItems: [], partners: [] } })
+    expect(normalized.settings.costItems.length).toBeGreaterThan(0)
+    expect(normalized.settings.costItems).toEqual(BUILTIN_COST_ITEMS)
+    expect(normalized.settings.partners).toEqual([])
+  })
+
   it('垃圾输入返回默认数据', () => {
     expect(normalizeAppData(null)).toEqual(DEFAULT_DATA)
     expect(normalizeAppData('abc')).toEqual(DEFAULT_DATA)

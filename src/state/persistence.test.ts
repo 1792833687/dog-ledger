@@ -6,6 +6,9 @@ import { createMemoryStorage } from '../storage/memory'
 import { DEFAULT_DATA } from '../domain/types'
 import type { AppData } from '../domain/types'
 
+/** 只用于本用例：模拟「老版本存下来的对象缺了新字段」这种运行时状态。 */
+type DeepPartial<T> = T extends object ? { [K in keyof T]?: DeepPartial<T[K]> } : T
+
 /** 一个永远失败的存储：模拟浏览器不给 IndexedDB，或配额已满。 */
 const failingStorage: Storage = {
   load: () => Promise.reject(new Error('indexedDB is not defined')),
@@ -28,17 +31,23 @@ describe('loadPersistedData', () => {
   // 读回来必须照常能用，而不是缺字段让界面炸掉。
   it('读回缺 preOrders 与 preOrderLeadDays 的老数据时补齐', async () => {
     const storage = createMemoryStorage()
-    const legacy = {
-      version: 1,
-      settings: { partners: [{ id: 'p1', name: '我', shareRatio: 1 }] },
-      batches: [], dogs: [], entries: [],
-    } as unknown as AppData
-    await storage.save(legacy)
+    // 老版本写进 IndexedDB 的对象根本没有这两个键，所以从今天的真数据出发把键删掉最贴切。
+    // DeepPartial 只是「删键」这件事的类型视图；下一步 save 要的是真实存储内容，
+    // 那里必须还原成 AppData（本用例模拟的正是「运行时缺键但界面照常处理」）。
+    const legacy: DeepPartial<AppData> = structuredClone(DEFAULT_DATA)
+    Reflect.deleteProperty(legacy, 'preOrders')
+    Reflect.deleteProperty(legacy.settings!, 'preOrderLeadDays')
+
+    // 没有这两条断言，将来 DEFAULT_DATA 一旦不再带这两个键，本用例会静默空转。
+    expect('preOrders' in legacy).toBe(false)
+    expect('preOrderLeadDays' in legacy.settings!).toBe(false)
+
+    await storage.save(legacy as AppData)
 
     const loaded = await loadPersistedData(storage)
     expect(loaded?.preOrders).toEqual([])
     expect(loaded?.settings.preOrderLeadDays).toBe(3)
-    expect(loaded?.settings.partners).toEqual([{ id: 'p1', name: '我', shareRatio: 1 }])
+    expect(loaded?.settings.partners).toEqual(DEFAULT_DATA.settings.partners)
   })
 
   // 这是整个应用骨架最容易挂掉的一条路径：启动时 storage.load() 一旦 reject，

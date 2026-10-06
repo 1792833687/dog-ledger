@@ -37,7 +37,11 @@ export function normalizeAppData(raw: unknown): AppData {
       ...DEFAULT_SETTINGS,
       ...sourceSettings,
       partners: Array.isArray(partners) ? partners : DEFAULT_SETTINGS.partners,
-      costItems: Array.isArray(costItems) ? costItems : DEFAULT_SETTINGS.costItems,
+      // 这两条的回落口径不同，与 importBackup 的白名单逐字一致：
+      // 合伙人清空是一种真实状态（空数组保留，只有 null/undefined 才回落）；
+      // 而本仓没有删除成本项的入口，空数组只可能来自手改或坏数据，一旦透传下去，
+      // 记账时的支出类别下拉会变成零个选项，用户记的每一笔支出都拿不到分类。
+      costItems: Array.isArray(costItems) && costItems.length > 0 ? costItems : DEFAULT_SETTINGS.costItems,
     },
   })
 }
