@@ -4935,7 +4935,7 @@ export function setBatchChannel(data: AppData, batchId: string, channel: Channel
 - 8 只狗 2 只死：`addBatchCosts` 传入四个正数 → 追加 **1 + 8 + 8 + 2 = 19 笔**；逐类按 `category` 数一遍（不要只数总数——总数 19 在"medical 8 + quarantine 8 + 别的 3"这种错法下也可能成立）。
 - 只填运输 → 只 1 笔；四行全 0 → 一笔都不新增。
 - **与手记的支出共存**：先在 `data.entries` 里放一笔用户自己记的该批 `expense`（`category: 'other'`），补完账后那笔**逐字还在**，且总笔数只多不少。
-- `disposal` 按"点击那一刻"取快照：补账后把一只狗标 `dead` 再补一次 `disposal` → 只新增 1 笔（旧的 2 笔不动）。**"不自动追溯"是刻意的**，这条测试就是它的说明。
+- `disposal` 按"点击那一刻"取快照，**且不按 `dogId` 去重**：补账后把一只狗标 `dead` 再补一次 `disposal` → 这一次会为**当时所有死亡犬**各记一笔（原例里是 3 笔，总计 5 笔），旧的两笔**连引用都不换**。**"不自动追溯、也不去重"是刻意的**（设计 §3.10 `:411` 与 §7 验收 `:547`：同一张表连点两次必须得到**两倍**流水）——真正拦住重复记账的是表下常显的「这一批已记成本 ¥X · 共 N 笔」与提交前的「将新增 N 笔」确认，不是静默去重。（本行原文写「只新增 1 笔」，与设计冲突，是控制器的笔误，已按设计改正。）
 - `batchCostsIncomplete`：新建批次（只有 `purchase` 流水）→ `true`；补一笔 `transport` → `false`；只有一笔手记的非 purchase 支出 → `false`（用户记了账就不再挂橙字）。
 - `previewBatchCosts` 的 `count` / `totalFen` 与 `addBatchCosts` 实际新增的笔数与金额**逐字相等**（同一条 fixture 跑两遍对比）。
 - 找不到 `batchId` → `toBe(data)`。
@@ -4949,6 +4949,20 @@ export function setBatchChannel(data: AppData, batchId: string, channel: Channel
   git add src/domain/batchCosts.ts src/domain/batchCosts.test.ts
   git commit -m "feat(domain): 补账表（只新增不替换）"
   ```
+
+> **Task 25 实施记录（2026-10-06）—— 提交 `9922e6f`**（2 files / +500 / −0，只新增 `src/domain/batchCosts.ts` 129 行与 `src/domain/batchCosts.test.ts` 371 行 / 27 条，既有文件一个字节没动）
+>
+> **门禁**：`Test Files 25 passed (25)` / `Tests 610 passed (610)`（基线 24 / 583，**+27**）、`tsc -b` 无输出 + `✓ 52 modules transformed` / `✓ built in 215ms`、`npx oxlint` `Found 0 warnings and 0 errors.`（68 files）、`git status --short` 空。控制器独立复跑一致。红态：`Error: Cannot find module './batchCosts' imported from ...batchCosts.test.ts`。
+>
+> **落点**：`batchCosts.ts:20 BatchCostsInput`（导出接口，替代任务书的行内对象——两函数入参逐字相同，抽一处防分叉，与 `AddPreOrderInput`/`DogQuarantinePatch` 同体例）、`:39 safeMoney`（`!Number.isFinite → 0` **再** `Math.max(0, Math.round())`）、`:51 plannedCostEntries`（**不导出，笔数口径唯一实现**）、`:104 batchCostsIncomplete`、`:110 addBatchCosts`、`:121 previewBatchCosts`（只 `count = entries.length` + `totalFen = entries.reduce((s,e)=>s+e.amount,0)`，**没有第二套乘法公式**）。
+>
+> **控制器裁定（唯一需要裁定的一条）**：任务书 `:4938` 那句「补第二次 `disposal` 只新增 1 笔」**是控制器的笔误，按设计改正**——设计 §3.10 `:411`（"只新增、不替换……因此同一张表点两次会记两遍"）与 §7 验收 `:547`（"同一张表连点两次必须得到**两倍**流水（这是刻意行为，不是 bug）"）都要求**不去重**；brief 里写的也只是"disposal 只覆盖点击那一刻 `status === 'dead'` 的狗"。实施者按不去重实现（第二次为当时 3 只死狗各记一笔、总计 5 笔，旧两笔连引用都不换）并额外写了一条测试把"补账不幂等"钉死——**采纳**。本任务书那一行已改写。**拦住重复记账的办法是表下常显「这一批已记成本 ¥X · 共 N 笔（含收购款）」+ 提交前「将新增 N 笔流水，共 ¥X」的确认，不是静默去重**（口径见设计 §3.10）。
+>
+> **其余判断（全部保留）**：①`previewBatchCosts` 复用 `plannedCostEntries` 会白生成 19 次 `crypto.randomUUID()` 随即丢弃——接受，换来笔数口径真的只有一处；②`batchCostsIncomplete` 对不存在的批次 id 返回 `true`（按任务书公式自然如此，UI 不会问），不额外加守卫；③`type: 'expense' as const` / `paidBy: 'pool' as const` 是收窄字面量的常规手段，不是静音手段；④`base` 在循环外建一次被展开共享，字段全是原始值，不存在共享可变引用；⑤四行全 0 返回**同一引用**（与"找不到批次"同一判据）。
+>
+> **额外建的测试（任务书没点名但值得留着）**：数学上的 `safeMoney` 边界（`0.6 → 1 分`、`0.4 → 什么都不产生`；负数/NaN/Infinity 静默不产生且 `entries.every(e => Number.isFinite(e.amount))`）；`previewBatchCosts` 批次不存在 → `{0,0}` 且不改动 data；三条旧口径在**「收货 → 补账」完整链路**上重建（`receivedEightDogs()` 先 `addBatchWithDogs` 建 8 只再补账）：17 笔 = 8 收购 + 1 运输 + 8 疫苗且 `batchTotalCost === 8*60000 + 40000 + 8*8000`、8 笔 quarantine、运输为 0 不写而 medical 仍 8 笔。
+>
+> **交给 Task 26/27/28 的三条硬约束**：①补账不幂等是刻意的，界面必须常显已记成本合计与笔数、并在提交前用 `previewBatchCosts` 弹「将新增 N 笔流水，共 ¥X」；②`disposal` 的"点击那一刻"要求 UI **在提交时**读当时的 `dogs[].status`，**不许**在弹窗打开时缓存死狗名单；③`floorPriceFen`/`batchPerDogCostFen` 在补账前仍偏低，`batchCostsIncomplete` 的橙字提醒不能让用户少看到。
 
 ---
 
