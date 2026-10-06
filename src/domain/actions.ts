@@ -371,6 +371,10 @@ export function addPreOrder(data: AppData, input: AddPreOrderInput): AppData {
  * 数字会让批次上的留痕对不上（设计 §3.9）。更要紧的是 `status` 本身**不在 patch 类型里**，
  * 界面无法把「已收货」改回「预定中」再收一次、建出两个批次。
  * 记错了先 `cancelPreOrder`，再 `deletePreOrder`。
+ *
+ * `sellerName` / `collectDate` 写入前 `trim()`，与 `addPreOrder` 同一条理由（见那边的说明）：
+ * 同一字段、两条写路径，必须同一个存法，否则任何绕过界面的调用方（导入、将来的批量编辑）
+ * 都会把带空格的日期写进库，悄悄毁掉提醒。
  */
 export function updatePreOrder(
   data: AppData,
@@ -396,10 +400,16 @@ export function updatePreOrder(
   }
   const next: PreOrder = {
     ...order,
-    sellerName: keepOrSet(patch.sellerName, order.sellerName),
+    // `sellerName` / `collectDate` 与 `addPreOrder` 同一个存法：写入前 `trim()`。
+    // 这两个字段会被拿去排序与比日期，前后带空格的 `' 2026-10-20 '` 比任何真日期都"小"
+    // （空格 0x20 小于数字），`preOrderStage` 里那句 `today > order.collectDate` 对
+    // **任何**今天都成立 —— 明明还有几天才去收的单子，卡片上会写成「已经过期」。
+    // trim 放在 `keepOrSet` 的入参上（而不是结果上）：没提到的键原样返回旧值，
+    // 不去顺手"洗干净"用户没碰的那个字段。
+    sellerName: keepOrSet(patch.sellerName?.trim(), order.sellerName),
     sellerContact: keepOrSet(patch.sellerContact, order.sellerContact),
     expectedCount: keepOrSet(patch.expectedCount, order.expectedCount),
-    collectDate: keepOrSet(patch.collectDate, order.collectDate),
+    collectDate: keepOrSet(patch.collectDate?.trim(), order.collectDate),
     traits: keepOrSet(patch.traits, order.traits),
     note: keepOrSet(patch.note, order.note),
   }

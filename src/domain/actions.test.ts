@@ -10,6 +10,7 @@ import {
 import { batchSummary, dogIncome, dogOwnCost, batchTotalCost, dogProfitFen } from './costing'
 import { poolBalance, advanceBalance, contributedCapital, distributedTo } from './ledger'
 import { quarantineStatus } from './quarantine'
+import { preOrderStage } from './preOrders'
 import { validateSettings } from './settlement'
 import {
   addPreOrder, updatePreOrder, cancelPreOrder, deletePreOrder, receivePreOrder,
@@ -1149,6 +1150,44 @@ describe('updatePreOrder', () => {
     expect(next.preOrders[1]).not.toBe(before[1])
     expect(next.preOrders[2]).toBe(before[2])
     expect(next.preOrders.map(o => o.sellerName)).toEqual(['老李', '老王', '老张'])
+  })
+
+  // 「改」与「建」必须同一个存法：`addPreOrder` 存 trim 后的 `collectDate`，
+  // 这里要是照原样存，前后带空格的 ' 2026-10-20 ' 就进了库。它比任何真日期都"小"
+  // （空格 0x20 小于数字），于是 `preOrderStage` 里那句 `today > order.collectDate`
+  // 对**任何**今天都成立 —— 本来「还有 3 天去收」的单子，卡片上会写成「已经过期」。
+  it('★ 改 collectDate 会 trim，且 trim 之后提醒仍然判得对', () => {
+    const data = addPreOrder(DEFAULT_DATA, good)
+    const id = at(data, 0).id
+    const next = updatePreOrder(data, id, { collectDate: ' 2026-10-15 ' })
+    expect(at(next, 0).collectDate).toBe('2026-10-15')
+    // 只断言字符串相等不够：这条测试存在的意义是钉住「提醒能正常来」。
+    // 10-14 距 10-15 还有 1 天、提前量是 3 天 —— 该去收了（不带空格时是 due_soon；
+    // 库里要是留着空格，今天比空串大，会被判成 overdue）。
+    expect(preOrderStage(at(next, 0), '2026-10-14', 3)).toBe('due_soon')
+  })
+
+  it('改 sellerName 也会 trim', () => {
+    const data = addPreOrder(DEFAULT_DATA, good)
+    const id = at(data, 0).id
+    const next = updatePreOrder(data, id, { sellerName: '  老李  ' })
+    expect(at(next, 0).sellerName).toBe('老李')
+  })
+
+  it('只改 sellerName 时 collectDate 不动', () => {
+    const data = addPreOrder(DEFAULT_DATA, good)
+    const id = at(data, 0).id
+    const next = updatePreOrder(data, id, { sellerName: '老王' })
+    expect(at(next, 0).collectDate).toBe('2026-10-20')
+  })
+
+  // 其余四个键（联系方式 / 约几只 / 特征 / 备注）是自由文本，用户打成什么样就存什么样
+  // —— `addPreOrder` 也从不 trim 它们。这条测试盯的是「别顺手全都 trim」。
+  it('note 前后带空格照原样存下来（只动了那两个字，不是顺手全都 trim）', () => {
+    const data = addPreOrder(DEFAULT_DATA, good)
+    const id = at(data, 0).id
+    const next = updatePreOrder(data, id, { note: ' 两头猪钱 ' })
+    expect(at(next, 0).note).toBe(' 两头猪钱 ')
   })
 })
 
