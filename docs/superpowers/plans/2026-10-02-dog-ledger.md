@@ -5527,6 +5527,24 @@ export function setBatchChannel(data: AppData, batchId: string, channel: Channel
 
 ---
 
+**Task 31 / 33 / 35 实施记录（2026-10-03，实施者 `43e4ecdd`）+ 控制器自做的 Task 35b**
+
+> 三个提交：`cf4d311 fix(a11y): 正文与按钮颜色提到 WCAG AA，并加一条源码守卫`（11 files / +297 −121）→ `a92bd6e fix(ui): 320px 不再横向溢出，桌面底栏与内容同宽`（2 files / +20 −16）→ `f5840be feat(ui): 分享元信息、设置入口可点、底部换成线性图标`（11 files / +390 −21，含新建 `src/ui/navigation.ts` 62 行与 `src/ui/navigation.test.ts` 111 行）。控制器另做 `c3c3ff6 fix(ui): 分享图改成绝对 URL，报表页那句错指引改对`（2 files / +9 −6）。
+>
+> **门禁（控制器独立复跑）**：测试 763 → 763 → **778**（30 files）；模块数 58 → 58 → **59**（`navigation.ts` 进 bundle）；`oxlint --format=default` 全程 0/0（76 → 78 files）；`tsc -b` exit 0；每个提交后工作树干净。
+>
+> **Task 33 实测数字（实施者探针 `probes/dogledger-t33.mjs`，PORT 9358，JSON 在 `probes/t33-before.json` / `t33-after.json`）**：320×568「报」页展开设置时 `document.documentElement.scrollWidth` **325 → 313**（判定改成「`<= innerWidth` 且溢出元素为空」，因为这台 Edge 上改后是 313 而不是正好 320）、溢出元素 **1 个（「加」按钮 `right=325`）→ 0 个**、成本项行盒子宽 241 不变但子元素从「input 175 + select 64 + button 38 = 293」变成「input 独占一行 + select/button 换第二行」；1440×900：`<nav>` 外层仍 1425（负责那根上边框）、**内层从无到有、宽 512 = `main` 宽**、第一个标签按钮左边缘 **0 → 457 = `main` 左边缘**。改动本体：`SettingsPanel.tsx` 那行 `flex` → `flex flex-wrap` 且输入框 `flex-1` → `min-w-0 grow basis-full … sm:basis-0`（**不用 `flex-1` + `basis-full`**：两者同属 flex 简写族，谁生效取决于声明顺序）；`TabBar.tsx` 的 `<nav>` 去掉 `flex`、里面套 `<div className="mx-auto flex w-full max-w-lg">`。
+>
+> **Task 31 要点**：六个 token 全仓清零（46 处 `text-gray-400` 逐处查过祖先容器，**没有一处在 `bg-gray-100/200` 里**，所以一律 → `text-gray-500`）；16 处输入框加 `placeholder:text-gray-600`（白底的新批次名输入框保持 `gray-500`）；`CalculatePage.tsx:206/210/214/218` 的 `text-white + opacity-80`（合成后 **4.11:1**）改成 `text-emerald-50`（**5.20:1**）；`bg-red-600` 保留、`QuarantinePage.tsx` 的 `text-amber-800` 与 `ReportPage.tsx` 的 `bg-emerald-500`（装饰性占比条）保留；`git diff -U0` 证明**没碰任何注释**。
+>
+> **控制器裁定：13 条全部保留。** T31-1 源码守卫用 `import.meta.glob('?raw')` 而不是 `node:fs`（`tsconfig.app.json` 的 `types: ["vite/client"]` 会让 `node:fs` 在 `tsc -b` 报 `TS2591`，不该为此给应用代码开 node 权限）；T31-2 `placeholder` 用 `gray-600`（`gray-500` 叠 `bg-gray-100` 只有 4.39 —— **任务书映射表自己留的例外规则，轮到输入框才用上**）；T31-3 `opacity-80` 是映射表漏掉的真实不达标（**这条最值得记：`opacity` 会让前景与背景按比例混合，只看 token 名算不出对比度**）；T31-4 Task 31 模块数仍 58（测试不进 bundle）；T33-1 判定用 `<= innerWidth`；T33-2 布局不加单测（node 环境量不出来）；T35-1 多导出 `settingsRequested()` / `clearSettingsRequest()`；T35-2 顺手对齐 `public/manifest.webmanifest` 的 `theme_color`；T35-4 挂起标志改成「置位 + 渲染时读」（先是被 `set-state-in-effect` warning 逼的，随后发现 `useState(takeSettingsRequest)` 惰性初值在 **StrictMode 下会双调**、第二次返回 false → 开发环境按钮白点，生产不双调 —— 正是最难发现的那类偏差）；T35-6 `tabs.test.ts` 是追加不是新建；T35-7 `aria-current` 只给选中项。
+>
+> **Task 35b（控制器自己做的两个尾巴）**：①`og:image` / `twitter:image` 改成绝对 URL `https://1792833687.github.io/dog-ledger/icon-512.png`、补 `og:url` 与 `og:image:width/height=512`（抓取器不会拿相对路径去拼域名；域名写死是刻意的，README / DEPLOY 里本来就写着同一个地址）；②`src/ui/pages/ReportPage.tsx:149` 那句「先去「设置」页把人加上」改成「往下滚到本页底部的「财务设置」把人加上」（**这一页的设置面板就在同一页往下滚，措辞与「钱」页的「跳标签」不一样**）。
+>
+> **已知限制（写进最终汇报）**：没有专门设计的 1200×630 分享图（用的是 512×512 方图）；`public/icon-192.png` / `icon-512.png` / `favicon.svg` 里的绿可能仍是旧的 `#059669`，而 `theme-color` 已改 `#047857`；`contrast.test.ts` 的源码守卫**只认 token 名**，认不出「`text-white` 叠在 `bg-emerald-700` 上还带 `opacity-*`」这类算出来的低对比度 —— 那类只能靠控制器的 CDP 探针。
+
+---
+
 ### Task 32: 离线可打开（手写 service worker）与存储失败可见性
 
 **Goal:** 断网也能打开（现在是 `ERR_INTERNET_DISCONNECTED`）；写入失败不再只在控制台警告，而是**在页面上明说**。
