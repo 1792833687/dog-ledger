@@ -224,9 +224,9 @@ export function SettingsPanel() {
           </li>
         ))}
       </ul>
-      <div className="mt-2 flex items-center gap-2">
+      <div className="mt-2 flex flex-wrap items-center gap-2">
         <input
-          className="flex-1 rounded-md bg-gray-100 px-2 py-1.5 text-sm outline-none placeholder:text-gray-600"
+          className="min-w-0 grow basis-full rounded-md bg-gray-100 px-2 py-1.5 text-sm outline-none placeholder:text-gray-600 sm:basis-0"
           placeholder="新增成本项，如 狗粮"
           value={newItemName}
           onChange={e => setNewItemName(e.target.value)}
