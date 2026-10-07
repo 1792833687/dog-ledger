@@ -26,6 +26,34 @@ export function Modal({
   const panelRef = useRef<HTMLDivElement | null>(null)
   const openerRef = useRef<Element | null>(null)
 
+  /**
+   * **关着的时候**盯着「谁拿到了焦点」——那通常就是等一下要把弹窗打开的那个按钮。
+   *
+   * 为什么不在 `open` 变真之后再记：React 在提交阶段就会把焦点交给带 `autoFocus` 的输入框，
+   * 等「打开」那个 effect 跑起来时 `document.activeElement` 已经在面板里了，记下来的会是
+   * 「面板里的输入框」；关掉时那个节点已经脱离文档，`focus()` 无效、焦点掉回 `body`
+   *（控制器的 CDP 探针实测到的就是这个：Esc 关掉「改这一笔」之后 `activeElement` 是 `body`）。
+   *
+   * 为什么用 `focusin` 而不是「渲染期写 ref」：后者会被 `react(refs)` 门禁拦下来
+   *（refs 不该在渲染期访问）。事件监听器里写 ref 是标准做法。
+   */
+  useEffect(() => {
+    if (open) return
+    openerRef.current = document.activeElement
+    const remember = (event: FocusEvent): void => {
+      // 只看面板**外面**的焦点：打开弹窗那一下，React 会在提交阶段就把焦点给 autoFocus
+      // 的输入框，而那一刻本监听器还没被卸载 —— 不排掉它，就会把「开启者」记成面板里的
+      // 输入框；关闭时那个节点已经脱离文档，focus() 无效、焦点掉回 body。
+      if (event.target instanceof Element && event.target.closest('[role="dialog"]') === null) {
+        openerRef.current = event.target
+      }
+    }
+    document.addEventListener('focusin', remember)
+    return () => {
+      document.removeEventListener('focusin', remember)
+    }
+  }, [open])
+
   // `onClose` 基本每次渲染都是新的箭头函数。放进 ref 而不是 effect 依赖里，否则那个
   // 「把焦点移进面板」的 effect 会跟着每次渲染重跑 —— 在弹窗里打字时焦点会被反复抢回面板。
   const onCloseRef = useRef(onClose)
@@ -36,8 +64,6 @@ export function Modal({
   useEffect(() => {
     if (!open) return
 
-    // 记下是谁打开的，关的时候原样还回去（不然读屏用户的落点会掉回页面开头）。
-    openerRef.current = document.activeElement
     const panel = panelRef.current
     if (panel !== null) {
       // 面板自己先接着焦点；但如果里面已经有 autoFocus 的输入框抢到了，就别抢回来。
@@ -80,7 +106,9 @@ export function Modal({
     return () => {
       document.removeEventListener('keydown', onKeyDown)
       const opener = openerRef.current
-      if (opener instanceof HTMLElement) opener.focus()
+      // `isConnected` 是必要的：打开弹窗的那个按钮可能已经不在文档里了（比如删掉那一行
+      // 之后列表重渲染），这时 `focus()` 不会生效、焦点白掉一次。
+      if (opener instanceof HTMLElement && opener.isConnected) opener.focus()
     }
   }, [open])
 

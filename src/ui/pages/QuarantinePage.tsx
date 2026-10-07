@@ -82,6 +82,7 @@ export function QuarantinePage() {
 
       <select
         className="mt-3 w-full rounded-lg bg-white px-3 py-2 text-sm shadow-sm"
+        aria-label="选一个批次"
         value={batch.id}
         onChange={e => setSelectedBatchId(e.target.value)}
       >
