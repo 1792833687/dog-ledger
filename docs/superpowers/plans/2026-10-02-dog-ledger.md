@@ -5517,6 +5517,106 @@ export function setBatchChannel(data: AppData, batchId: string, channel: Channel
 
 ---
 
+### Task 32: 离线可打开（手写 service worker）与存储失败可见性
+
+**Goal:** 断网也能打开（现在是 `ERR_INTERNET_DISCONNECTED`）；写入失败不再只在控制台警告，而是**在页面上明说**。
+
+**Files:**
+- Create: `public/sw.js`
+- Modify: `src/main.tsx`（注册）、`src/state/persistence.ts`、`src/state/AppDataContext.tsx`、`src/state/useAppData.ts`、`src/App.tsx`、`src/ui/navigation.ts`（新增 `requestTab` / `onTabRequest`，**不许改 Task 35 已有的导出**）
+- Create: `src/ui/components/OfflineBanner.tsx`、`src/ui/components/SaveFailedBanner.tsx`
+- Modify: `src/ui/pages/BackupPanel.tsx`（未持久化时的说明行）、`src/state/persistence.test.ts`（补 `persistData` 返回值用例）
+
+**必须满足的行为**
+- **`public/sw.js`（手写，零依赖）**：缓存名带版本常量（`const CACHE = 'dog-ledger-v1'`）；`install` 里 `cache.addAll(['./', './index.html', './manifest.webmanifest', './icon-192.png', './icon-512.png'])` + `self.skipWaiting()`；`activate` 删掉不在白名单里的缓存 + `self.clients.claim()`；`fetch` **只处理同源 GET**：`request.mode === 'navigate'` 走 network-first、失败回落 `caches.match('./index.html')`（本应用没有前端路由，回落首页就是对的），其它同源资源 cache-first、未命中再走网络并回填缓存；**非 2xx 不缓存、跨域与 `chrome-extension` 一律放行不缓存**。
+- **注册**：`src/main.tsx` 里 `if (import.meta.env.PROD && 'serviceWorker' in navigator)` → `window.addEventListener('load', () => { void navigator.serviceWorker.register('./sw.js') })`。**dev 不注册**（避免开发期缓存干扰）；`vite preview` 与线上都是 PROD，走查用的就是这条路径。
+- **离线可见性**：`OfflineBanner` 用 `useState` + `useEffect` 监听 `online` / `offline`，离线时显示一行灰底小字「现在没有网络。账本本来就不联网，照常能用 —— 只要别在没导出备份前清浏览器数据。」，恢复网络自动消失；挂在 `BackupBanner` 上面。
+- **存储失败可见性**：`persistData(storage, data)` 改成 **`Promise<boolean>`**（成功 `true`；`catch` 里 `console.warn` 之后 `false`，仍然不 reject）；`AppDataContext` 增加 **`saveFailed: boolean`**（最近一次写入失败 → `true`，之后任何一次写入成功 → 回到 `false`）与 **`persisted: boolean | null`**（`requestPersistentStorage()` 的结果，未知为 `null`），经 context 暴露，类型加到 `src/state/useAppData.ts`。
+- `SaveFailedBanner`：`saveFailed` 时显示红底白字「**当前设备无法可靠保存**：刚才那次改动只留在内存里，关掉网页就会丢。请立刻导出备份。」+「去导出备份」按钮（点击 → `requestTab('report')`）。
+- `BackupPanel`：`persisted === false` 且 `data.entries.length > 0` 时加一行琥珀色小字「这台设备没有把本站数据标为『持久』，系统在存储紧张时可能清掉它 —— 备份不能省。」（**不要**把它做成红色警告条，那是 `SaveFailedBanner` 的活）。
+
+**测试要求**（`src/state/persistence.test.ts`）
+- `persistData` 在 `save` 成功时返回 `true`；在 `save` reject 时返回 `false` 且**不抛**（用假的 `Storage` 对象，形如 `{ load, save: async () => { throw new Error('quota') }, clear }`）。
+- `loadPersistedData` 既有用例一条都不许改。
+
+**Steps**
+- [ ] **Step 1**：先写失败用例（`persistData` 现在返回 `void`，`expect(await persistData(...)).toBe(false)` 必红）。
+- [ ] **Step 2**：改 `persistence.ts` / `AppDataContext.tsx` / `useAppData.ts`；写 `sw.js` 与两个 banner；`main.tsx` 注册；`App.tsx` 挂载；`navigation.ts` 加 `requestTab`。
+- [ ] **Step 3**：三条门禁 + `git status --short`。**另贴一条自证**：`npm run build` 之后 `dist/sw.js` 存在且 `dist/index.html` 里 `assets/index-*.js` 名字与 `dist/assets/` 里的一致。
+- [ ] **Step 4**：提交：
+  ```bash
+  git add public/sw.js src/main.tsx src/state src/App.tsx src/ui
+  git commit -m "feat: 离线可打开，存储失败不再悄悄吞掉"
+  ```
+
+---
+
+### Task 34: 弹窗与表单的无障碍语义
+
+**Goal:** 弹窗是个真的对话框（可读屏、能 Esc 关、焦点不乱跑）；输入框都有稳定的可访问名；每页一个一级标题；重复的「改」「删」按钮能说清改/删的是哪一笔。
+
+**Files:**
+- Modify: `src/ui/components/Modal.tsx`、`src/ui/components/Field.tsx`、`src/ui/components/ConfirmDialog.tsx`
+- Modify: `src/ui/pages/*.tsx`（手写 input/select 的可访问名、每页 `<h1>`、行内按钮 `aria-label`）
+- Create: `src/ui/a11y.test.ts`（源码守卫，见下）
+
+**必须满足的行为**
+- **`Modal.tsx`**：面板加 `role="dialog"`、`aria-modal="true"`、`aria-labelledby` 指向标题（标题用 `useId()` 生成的 id）；**Esc 关闭**（`open` 时挂 `keydown` 监听，`Escape` → `onClose()`）；打开时把焦点移进面板（面板 `tabIndex={-1}` + `.focus()`）、关闭时把焦点**还给打开它的那个元素**（打开时记下 `document.activeElement`）；**Tab 循环锁在面板内**（最小 focus trap：在面板内可聚焦元素之间环绕，`Tab`/`Shift+Tab` 都不许跑到背后的页面上）。
+- **`Field.tsx`**：`input` 加 `id`（`useId()`）+ `htmlFor`，错误文字用 `aria-describedby` 关联，有错误时 `aria-invalid="true"`。
+- **每页一个 `<h1>`**：`MoneyPage` 现在没有 → 加一个（可以 `sr-only`）；同时逐页确认**只有一个** `<h1>`（`DogsPage` 详情视图的 `<h1>` 是批次名，列表视图也要有一个）。
+- **手写输入控件**（不是走 `Field` 的那些，例如「钱」页记账弹窗、预定单表单、导入文件框）全部要有可访问名：包裹 `<label>`、`id` + `htmlFor`、或 `aria-label` 三选一。
+- **重复按钮要能自证**：流水行的「改」「删」加 `aria-label`，含这笔账的摘要（例如 `改这一笔：收购价 ¥800` / `删这一笔：收购价 ¥800`，用既有 `entryLabel(...)` 拼）；预定单卡片的「删掉」带上卖家名；批次卡片的按钮带上批次名。
+
+**测试要求**（`src/ui/a11y.test.ts`，node 环境读源码，同 Task 31 的手法）
+- `src/ui/components/Modal.tsx` 的源码里必须含 `role="dialog"`、`aria-modal`、`Escape`。
+- `src/ui/pages/*.tsx` 每个文件里 `<h1` 出现次数**恰好 1**（`DogsPage.tsx` 允许 2，因为列表视图与详情视图各一个，报告里写明）。
+- 断言 `src/ui/**/*.tsx` 里**没有** `window.confirm` / `window.alert`（既有纪律，顺手钉住）。
+
+**Steps**
+- [ ] **Step 1**：先写 `src/ui/a11y.test.ts`（Modal 那两条与 h1 计数此时是红的）。
+- [ ] **Step 2**：改 `Modal.tsx` / `Field.tsx` / `ConfirmDialog.tsx` / 各页面。
+- [ ] **Step 3**：三条门禁 + `git status --short`。
+- [ ] **Step 4**：提交：
+  ```bash
+  git add src/ui
+  git commit -m "fix(a11y): 弹窗成为真对话框、输入框有可访问名、每页一个 h1"
+  ```
+
+---
+
+### Task 36: 备份里的敏感数据提示与「清空全部数据」
+
+**Goal:** 让用户知道备份文件是明文的、里面有别人的联系方式与检疫编号；并给一个**必须逐字确认**的清空入口（别再教用户去清浏览器数据）。
+
+**Files:**
+- Modify: `src/ui/pages/BackupPanel.tsx`
+- Create: `src/ui/backupDanger.ts` + `src/ui/backupDanger.test.ts`
+- Modify: `docs/superpowers/specs/2026-10-02-dog-trading-ledger-design.md`（§1.3 非目标那条「不做一键清空」改成「不做**一键**清空：清空必须逐字输入确认」；并在「已知限制」里记一句「导出是明文 JSON，将来可做可选口令加密」）
+
+**必须满足的行为**
+- 备份面板里常显一句红字说明：「备份文件是**明文**的，里面有你记的卖家姓名、联系方式、检疫证明编号 —— 发出去之前想清楚发给谁，别发到群里或公开的地方。」
+- 新增「**清空全部数据**」入口：做成红字次要按钮，**放在「从备份恢复」下面、与它明显分开**，点击后弹一个输入确认弹窗 ——
+  - 弹窗正文逐字：「这台设备上的全部批次、狗、流水、预定单都会被删掉，**没有撤销**。要留就先导出备份。」
+  - 确认键文案「**清空**」，**在输入框里逐字打出「清空」两个字之前是禁用的**；
+  - 确认后走既有 `replaceAll(structuredClone(DEFAULT_DATA))`（落库即覆盖），清空完停留在「报」页并给一句回执「已清空。这台设备上现在是一本空账。」。
+- 判定逻辑抽成纯函数 `src/ui/backupDanger.ts`：`clearPhrase(): string`（返回 `'清空'`）、`canClearData(input: string): boolean`（`input.trim() === clearPhrase()`，全角空格/前后空格都算不通过的话要在注释里写明理由）。界面只调这两个函数，**不许把「清空」两个字硬编码在 JSX 里两处**。
+- 密码加密**本版不做**，只写进设计书的已知限制（理由：加密备份会让「发到微信就能恢复」这条最重要流程多一道口令，值不值得要用户点头）。
+
+**测试要求**（`src/ui/backupDanger.test.ts`）
+- `canClearData('清空')` → `true`；`' 清空 '` → `true`（trim 之后相等）；`''`、`'清'`、`'清 空'`（中间有空格）、`'清空全部'` → `false`。
+
+**Steps**
+- [ ] **Step 1**：先写 `backupDanger.test.ts`（红）。
+- [ ] **Step 2**：实现 + 接进 `BackupPanel.tsx` + 改设计书。
+- [ ] **Step 3**：三条门禁 + `git status --short`。
+- [ ] **Step 4**：提交：
+  ```bash
+  git add src/ui docs/superpowers/specs/2026-10-02-dog-trading-ledger-design.md
+  git commit -m "feat(ui): 备份提示敏感数据，加逐字确认的清空入口"
+  ```
+
+---
+
 ### Task 14: 备份安全网 + PWA + 上线
 
 > **状态（2026-10-03）**：本任务**已在第一版落地并上线**（GitHub Pages）。上面 Task 22–30 是修订三的实施任务，它们结束之后由 Task 30 负责重新构建与推送；本任务的步骤与验收标准保持原样，作为"如果将来要重做一遍"的参考与验收依据。
