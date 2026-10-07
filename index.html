@@ -5,9 +5,35 @@
     <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
-    <meta name="theme-color" content="#059669" />
+    <!-- emerald-700：跟应用里所有主色一致（原来写的是 emerald-600，比界面里深一档都不对） -->
+    <meta name="theme-color" content="#047857" />
     <link rel="manifest" href="./manifest.webmanifest" />
     <link rel="apple-touch-icon" href="./icon-192.png" />
+
+    <!-- 分享时的样子。以前什么标签都没有，微信里发出去就是一条光秃秃的蓝链接。 -->
+    <meta
+      name="description"
+      content="犬只买卖的记账台账：预估保本价、记每批成本与流水、盯检疫与预定单，数据只存在自己手机上。"
+    />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="狗账" />
+    <meta
+      property="og:description"
+      content="犬只买卖的记账台账：预估保本价、记每批成本与流水、盯检疫与预定单，数据只存在自己手机上。"
+    />
+    <!-- 相对路径：站点部署在子目录（base: './'），绝对路径写不出来。
+         另外抓取器普遍要求 og:image 是绝对 URL，这里给的是相对的，
+         所以某些平台可能拿不到图 —— 已知限制，见报告。 -->
+    <meta property="og:image" content="./icon-512.png" />
+    <meta property="og:locale" content="zh_CN" />
+    <meta name="twitter:card" content="summary" />
+    <meta name="twitter:title" content="狗账" />
+    <meta
+      name="twitter:description"
+      content="犬只买卖的记账台账：预估保本价、记每批成本与流水、盯检疫与预定单，数据只存在自己手机上。"
+    />
+    <meta name="twitter:image" content="./icon-512.png" />
+
     <title>狗账</title>
   </head>
   <body>

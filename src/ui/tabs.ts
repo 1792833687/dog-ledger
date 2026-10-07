@@ -12,22 +12,42 @@ import { QuarantinePage } from './pages/QuarantinePage'
  */
 export type TabKey = 'calc' | 'dogs' | 'quarantine' | 'money' | 'report'
 
+/**
+ * 底部标签的图标键。图标本体在 `TabBar.tsx` 里手写成内联 SVG（`ICON_PATHS`）——
+ * 不引图标库，也不再用 emoji：emoji 的字形、颜色、基线由系统字体决定，
+ * 同一个应用在安卓、iOS、Windows 上长得不一样，审计里也算无障碍问题。
+ */
+export type TabIconKey = 'calculator' | 'dog' | 'stethoscope' | 'yuan' | 'chart'
+
+/**
+ * 允许的图标键白名单。`tabs.test.ts` 拿它挡住「顺手塞回一个 emoji」——
+ * 那种改动编译得过、lint 也不响。
+ */
+export const TAB_ICON_KEYS: readonly TabIconKey[] = [
+  'calculator',
+  'dog',
+  'stethoscope',
+  'yuan',
+  'chart',
+]
+
 export interface TabDef {
   key: TabKey
   /** 底部标签栏上的短标签 */
   label: string
-  icon: string
+  /** 图标键（不是 emoji 字符） */
+  icon: TabIconKey
   /** 选中这个标签时渲染的页面 */
   component: ComponentType
 }
 
 /** 唯一的标签清单：顺序即底部标签栏从左到右的顺序。 */
 export const TABS: TabDef[] = [
-  { key: 'calc', label: '算', icon: '🧮', component: CalculatePage },
-  { key: 'dogs', label: '狗', icon: '🐕', component: DogsPage },
-  { key: 'quarantine', label: '检', icon: '🩺', component: QuarantinePage },
-  { key: 'money', label: '钱', icon: '💰', component: MoneyPage },
-  { key: 'report', label: '报', icon: '📊', component: ReportPage },
+  { key: 'calc', label: '算', icon: 'calculator', component: CalculatePage },
+  { key: 'dogs', label: '狗', icon: 'dog', component: DogsPage },
+  { key: 'quarantine', label: '检', icon: 'stethoscope', component: QuarantinePage },
+  { key: 'money', label: '钱', icon: 'yuan', component: MoneyPage },
+  { key: 'report', label: '报', icon: 'chart', component: ReportPage },
 ]
 
 /** 打开应用时停在第一项（「算」）。 */

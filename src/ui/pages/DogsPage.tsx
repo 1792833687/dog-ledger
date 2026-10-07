@@ -620,7 +620,7 @@ export function DogsPage() {
           })}
           {data.batches.length === 0 && (
             <li className="rounded-xl bg-white p-6 text-center text-sm text-gray-500">
-              还没有批次。去「算」标签页一键建一个。
+              还没有批次。去「算」页一键建一个；也可以在上面记一张预定单，收到狗时自动建批次。
             </li>
           )}
         </ul>

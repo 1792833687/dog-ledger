@@ -1,10 +1,11 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useAppData } from '../../state/useAppData'
 import { validateSettings } from '../../domain/settlement'
 import { updateSettings, renamePartner, setPartnerRatio, addCostItem } from '../../domain/actions'
 import { Field } from '../components/Field'
 import { fenToTextInput } from '../planForm'
 import { formatPercent, applyPercentInput, applyMortalityInput, applyMoneyInput, applyDaysInput, inputError } from '../settingsForm'
+import { onSettingsRequest, settingsRequested, clearSettingsRequest } from '../navigation'
 
 /**
  * 「设置」面板：合伙人 / 分成比例 / 目标毛利率 / 自定义成本项。
@@ -32,6 +33,21 @@ export function SettingsPanel() {
   const [rabiesWaitDaysDraft, setRabiesWaitDaysDraft] = useState<string | null>(null)
   const [quarantineLeadDaysDraft, setQuarantineLeadDaysDraft] = useState<string | null>(null)
   const [preOrderLeadDaysDraft, setPreOrderLeadDaysDraft] = useState<string | null>(null)
+  // 设置面板默认收起（它是一长串设置，谁也不想每次进「报」页都看见）。
+  // 但「钱」页的「前往财务设置」按钮要能把它直接摊开，所以得受控。
+  //
+  // 用 `boolean | null`（null = 用户还没碰过它）而不是一个 `false`：
+  // 面板挂载时如果没人请求过、用户也没碰过，就照常收起；用户手动开过一次之后，
+  // 他的选择要压过那个模块级请求（`false || true` 会让「手动收起」失效）。
+  const [userOpen, setUserOpen] = useState<boolean | null>(null)
+
+  // 面板已经挂在屏上时又收到请求（不是在挂载路上）：接住，摊开。
+  // 这次 setState 来自订阅回调（外部事件），不是 effect 里的同步 setState。
+  useEffect(() => onSettingsRequest(() => setUserOpen(true)), [])
+
+  // 请求多半是在这个面板还没挂载的时候发出的 —— 那一刻人在「钱」页，通知没人接。
+  // 所以挂起标志也参与渲染判断：App 切到「报」页、面板第一次挂载时就读到它。
+  const settingsVisible = userOpen ?? settingsRequested()
 
   const s = data.settings
   const error = validateSettings(s)
@@ -54,7 +70,17 @@ export function SettingsPanel() {
   }
 
   return (
-    <details className="mt-4 rounded-xl bg-white p-4 shadow-sm">
+    <details
+      open={settingsVisible}
+      // 用户自己点开/收起时把状态同步回来，否则下一次重渲染会把他的操作弹回去。
+      onToggle={event => {
+        const open = event.currentTarget.open
+        setUserOpen(open)
+        // 收起来时顺手清掉挂起标志，不然下次再进「报」页它还会自己弹开。
+        if (!open) clearSettingsRequest()
+      }}
+      className="mt-4 rounded-xl bg-white p-4 shadow-sm"
+    >
       <summary className="cursor-pointer text-sm font-semibold text-gray-700">
         设置（合伙人 / 分成 / 目标毛利）
       </summary>

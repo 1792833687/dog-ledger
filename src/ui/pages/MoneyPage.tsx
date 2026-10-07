@@ -16,6 +16,7 @@ import {
   deleteWarning, entryDraftFrom, entryDraftIssue, entryPatch, entryScope,
 } from '../entryForm'
 import type { EntryDraft } from '../entryForm'
+import { requestSettings } from '../navigation'
 
 /**
  * 「最近流水」默认显示几笔。
@@ -136,9 +137,21 @@ export function MoneyPage() {
       </div>
 
       {partners.length === 0 ? (
-        <p className="mt-3 rounded-xl bg-amber-50 p-3 text-xs text-amber-700">
-          还没有合伙人。注资、报销、分红都要指明是谁的钱，先去「设置」页把人加上。
-        </p>
+        <div className="mt-3 rounded-xl bg-amber-50 p-3">
+          <p className="text-xs text-amber-700">
+            还没有合伙人。注资、报销、分红都要指明是谁的钱。
+          </p>
+          {/* 以前这句话写「先去『设置』页把人加上」，可底栏根本没有「设置」这个标签 ——
+              设置是「报」页最底下一个人默认收起的折叠块。用户照着找只会挨个标签点一遍。
+              现在这个按钮自己去把设置摊开，不用人找。 */}
+          <button
+            type="button"
+            onClick={() => requestSettings()}
+            className="mt-2 rounded-lg bg-amber-700 px-3 py-1.5 text-xs font-semibold text-white"
+          >
+            前往财务设置
+          </button>
+        </div>
       ) : (
         <div className="mt-3 grid grid-cols-2 gap-2">
           {partners.map(p => {
