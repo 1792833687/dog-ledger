@@ -5572,6 +5572,7 @@ export function setBatchChannel(data: AppData, batchId: string, channel: Channel
 
 **必须满足的行为**
 - **`Modal.tsx`**：面板加 `role="dialog"`、`aria-modal="true"`、`aria-labelledby` 指向标题（标题用 `useId()` 生成的 id）；**Esc 关闭**（`open` 时挂 `keydown` 监听，`Escape` → `onClose()`）；打开时把焦点移进面板（面板 `tabIndex={-1}` + `.focus()`）、关闭时把焦点**还给打开它的那个元素**（打开时记下 `document.activeElement`）；**Tab 循环锁在面板内**（最小 focus trap：在面板内可聚焦元素之间环绕，`Tab`/`Shift+Tab` 都不许跑到背后的页面上）。
+- **顺手补上 Task 31 漏下的 8 个 placeholder 颜色**（控制器用元素级统计查出来的：`<input>` 共 37 个、其中 22 个带 `placeholder` 属性、**8 个没显式颜色**）——`src/ui/pages/DogsPage.tsx:398`、`:406`、`:412`、`:418`、`:431`、`:437`（预定单表单六个框，`bg-gray-100` 底）与 `src/ui/pages/QuarantinePage.tsx:187`、`:197`（检疫编号 / 报告编号，`bg-gray-100` 底）。按 `src/ui/contrast.test.ts` 自己钉住的那条：**灰底上的 placeholder 用 `placeholder:text-gray-600`**（`gray-500` 叠在 `bg-gray-100` 上只有 4.39:1）。
 - **`Field.tsx`**：`input` 加 `id`（`useId()`）+ `htmlFor`，错误文字用 `aria-describedby` 关联，有错误时 `aria-invalid="true"`。
 - **每页一个 `<h1>`**：`MoneyPage` 现在没有 → 加一个（可以 `sr-only`）；同时逐页确认**只有一个** `<h1>`（`DogsPage` 详情视图的 `<h1>` 是批次名，列表视图也要有一个）。
 - **手写输入控件**（不是走 `Field` 的那些，例如「钱」页记账弹窗、预定单表单、导入文件框）全部要有可访问名：包裹 `<label>`、`id` + `htmlFor`、或 `aria-label` 三选一。
