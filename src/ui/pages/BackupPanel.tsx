@@ -7,7 +7,7 @@ import { todayLocalIso } from '../planForm'
 import type { AppData } from '../../domain/types'
 
 export function BackupPanel() {
-  const { data, update, replaceAll } = useAppData()
+  const { data, update, replaceAll, persisted } = useAppData()
   const fileInput = useRef<HTMLInputElement>(null)
   const [message, setMessage] = useState('')
   const [pendingRestore, setPendingRestore] = useState<AppData | null>(null)
@@ -81,6 +81,15 @@ export function BackupPanel() {
         }}
       />
       {message && <p className="mt-2 text-xs text-emerald-700">{message}</p>}
+      {/* 只在「问过、答案是不持久」且**真记了东西**时提醒：空账本被系统清掉也无所谓，
+          而 persisted 为 null（没问出来）时更不能当成坏消息吓人。
+          这里刻意用琥珀小字，不用红色警告条 —— 红条是「已经存不进去了」（SaveFailedBanner），
+          两者不是一回事。 */}
+      {persisted === false && data.entries.length > 0 && (
+        <p className="mt-2 text-xs text-amber-700">
+          这台设备没有把本站数据标为「持久」，系统在存储紧张时可能清掉它 —— 备份不能省。
+        </p>
+      )}
       <p className="mt-2 text-xs text-gray-500">
         恢复前会先问一次。导出后请马上把文件发到微信「文件传输助手」或存进电脑。
       </p>

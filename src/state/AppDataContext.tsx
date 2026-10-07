@@ -21,10 +21,16 @@ export function AppDataProvider({
   // （Task 1 的审查已用探针证实过这个别名：push 之后 BUILTIN_COST_ITEMS.length 4→5。）
   const [data, setData] = useState<AppData>(() => structuredClone(DEFAULT_DATA))
   const [ready, setReady] = useState(false)
+  // 写入失败要让用户看见（红底横幅），写入成功要能让它消失 —— 存的是「最近一次」的结果。
+  const [saveFailed, setSaveFailed] = useState(false)
+  // null = 还没问出来（或这个环境没有 navigator.storage）—— 界面不许把 null 当坏消息。
+  const [persisted, setPersisted] = useState<boolean | null>(null)
 
   useEffect(() => {
     let cancelled = false
-    void requestPersistentStorage()
+    void requestPersistentStorage().then(ok => {
+      if (!cancelled) setPersisted(ok)
+    })
     loadPersistedData(storage)
       .then(loaded => {
         if (cancelled) return
@@ -42,27 +48,36 @@ export function AppDataProvider({
     }
   }, [storage])
 
+  // 每次落盘都把结果记进 saveFailed。注意这里**不改** persistData 的行为：
+  // 它照样不 reject（否则 update 里每次改动都会冒出一个未处理的 rejection）。
+  const save = useCallback(
+    (next: AppData) => {
+      void persistData(storage, next).then(ok => setSaveFailed(!ok))
+    },
+    [storage],
+  )
+
   const update = useCallback(
     (fn: (d: AppData) => AppData) => {
       setData(prev => {
         const next = fn(prev)
-        void persistData(storage, next)
+        save(next)
         return next
       })
     },
-    [storage],
+    [save],
   )
 
   const replaceAll = useCallback(
     (next: AppData) => {
       setData(next)
-      void persistData(storage, next)
+      save(next)
     },
-    [storage],
+    [save],
   )
 
   return (
-    <AppDataContext.Provider value={{ data, ready, update, replaceAll }}>
+    <AppDataContext.Provider value={{ data, ready, update, replaceAll, saveFailed, persisted }}>
       {children}
     </AppDataContext.Provider>
   )

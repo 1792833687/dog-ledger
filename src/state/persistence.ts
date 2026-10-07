@@ -24,11 +24,17 @@ export async function loadPersistedData(storage: Storage): Promise<AppData | nul
 /**
  * 尽力保存：失败（存储不可用、配额满）时不让 Promise reject —— 否则每次改动都会抛出
  * 一个未处理的 rejection。降级为「这次改动只留在内存里」，并留一条控制台警告。
+ *
+ * 返回值就是这次写入到底成没成：控制台警告只有开发者看得见，而**用户账目只留在内存里**
+ * 这件事必须让用户自己知道（界面拿这个布尔值挂红底横幅）。所以这里返回 `boolean`
+ * 而不是 `void`，并且仍然不 reject —— 两个性质都要，缺一个就有调用方会挂。
  */
-export async function persistData(storage: Storage, data: AppData): Promise<void> {
+export async function persistData(storage: Storage, data: AppData): Promise<boolean> {
   try {
     await storage.save(data)
+    return true
   } catch (err) {
     console.warn('[狗账] 本地存储不可用，这次改动只留在内存里', err)
+    return false
   }
 }

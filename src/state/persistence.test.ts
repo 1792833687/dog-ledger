@@ -69,10 +69,33 @@ describe('persistData', () => {
     expect(await storage.load()).toEqual(DEFAULT_DATA)
   })
 
-  it('save 失败时不抛错，只降级（避免每次改动都产生未处理的 rejection）', async () => {
+  // 返回值就是「这次改动到底存下去了没有」的唯一答案。界面靠它决定要不要挂那条
+  // 红底「当前设备无法可靠保存」的横幅——没有返回值的话，写入失败只能进控制台，
+  // 用户在手机上永远不知道账只留在内存里。
+  it('写入成功时返回 true', async () => {
+    await expect(persistData(createMemoryStorage(), DEFAULT_DATA)).resolves.toBe(true)
+  })
+
+  it('save 失败时返回 false，且不抛错（避免每次改动都产生未处理的 rejection）', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     try {
-      await expect(persistData(failingStorage, DEFAULT_DATA)).resolves.toBeUndefined()
+      // 一个真的会 reject 的 save，形如配额满 / 隐私模式不给写。
+      const quotaStorage: Storage = {
+        load: () => Promise.resolve(null),
+        save: () => Promise.reject(new Error('quota')),
+        clear: () => Promise.resolve(),
+      }
+      await expect(persistData(quotaStorage, DEFAULT_DATA)).resolves.toBe(false)
+      expect(warn).toHaveBeenCalled()
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
+  it('save 失败时用的还是那条控制台警告，不把错误抛给调用方', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      await persistData(failingStorage, DEFAULT_DATA)
       expect(warn).toHaveBeenCalled()
     } finally {
       warn.mockRestore()

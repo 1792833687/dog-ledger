@@ -25,6 +25,10 @@
  */
 type Listener = () => void
 
+// 只要类型：`import type` 在编译后整行消失，所以这里不会和 `./tabs`（它反过来经由各页面
+// 引到本文件）形成运行时的循环引用。
+import type { TabKey } from './tabs'
+
 const listeners = new Set<Listener>()
 
 let requested = false
@@ -59,4 +63,26 @@ export function settingsRequested(): boolean {
 /** 用户把设置收起来了：清掉标志，免得下次挂载时它又自己弹开。 */
 export function clearSettingsRequest(): void {
   requested = false
+}
+
+const tabListeners = new Set<(key: TabKey) => void>()
+
+/**
+ * 订阅「有人想跳到某个标签页」，回调收到目标标签键。返回退订函数。
+ *
+ * 与上面那条「请人打开设置」的电话线不同，这里**不需要挂起标志**：喊话的人（比如
+ * 红底的「当前设备无法可靠保存」横幅）本身就挂在 `Shell` 里，而接话的人也是 `Shell`
+ * —— 它从应用起来到关掉一直都在，不存在「喊的时候没人在」的窗口。
+ * 设置那条不一样：请求来自「钱」页，而设置面板只在那两页之一挂载，所以要留标志。
+ */
+export function onTabRequest(listener: (key: TabKey) => void): () => void {
+  tabListeners.add(listener)
+  return () => {
+    tabListeners.delete(listener)
+  }
+}
+
+/** 请人跳到某个标签页。遍历副本的理由同 `requestSettings`。 */
+export function requestTab(key: TabKey): void {
+  for (const listener of [...tabListeners]) listener(key)
 }

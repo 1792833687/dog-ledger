@@ -6,6 +6,17 @@ export interface AppDataContextValue {
   ready: boolean
   update: (fn: (d: AppData) => AppData) => void
   replaceAll: (d: AppData) => void
+  /**
+   * 最近一次写入本地存储失败了 → true；之后任何一次写入成功 → 回到 false。
+   * 「失败过一次」不算数：用户可能只是碰上一次配额抖动，下一次存下去了就不该再吓他。
+   */
+  saveFailed: boolean
+  /**
+   * 浏览器有没有把本站标为「持久」存储（`navigator.storage.persist()`）。
+   * `null` = 还没问出来 / 这个环境没有这套 API —— 与「问过、答案是 false」不是一回事，
+   * 界面不能把 null 当成坏消息。
+   */
+  persisted: boolean | null
 }
 
 // 这个文件单独存在，不与 AppDataProvider 挤在一起，是因为 oxlint 的
