@@ -5542,6 +5542,9 @@ export function setBatchChannel(data: AppData, batchId: string, channel: Channel
 > **Task 35b（控制器自己做的两个尾巴）**：①`og:image` / `twitter:image` 改成绝对 URL `https://1792833687.github.io/dog-ledger/icon-512.png`、补 `og:url` 与 `og:image:width/height=512`（抓取器不会拿相对路径去拼域名；域名写死是刻意的，README / DEPLOY 里本来就写着同一个地址）；②`src/ui/pages/ReportPage.tsx:149` 那句「先去「设置」页把人加上」改成「往下滚到本页底部的「财务设置」把人加上」（**这一页的设置面板就在同一页往下滚，措辞与「钱」页的「跳标签」不一样**）。
 >
 > **已知限制（写进最终汇报）**：没有专门设计的 1200×630 分享图（用的是 512×512 方图）；`public/icon-192.png` / `icon-512.png` / `favicon.svg` 里的绿可能仍是旧的 `#059669`，而 `theme-color` 已改 `#047857`；`contrast.test.ts` 的源码守卫**只认 token 名**，认不出「`text-white` 叠在 `bg-emerald-700` 上还带 `opacity-*`」这类算出来的低对比度 —— 那类只能靠控制器的 CDP 探针。
+>
+> **控制器产物级核验（不依赖浏览器，用 `c3c3ff6` 的 `dist/`）**：`dist/index.html` 里 `og:url` / 绝对 `og:image` / `twitter:card` / `theme-color` / `#047857` 全部命中；`dist/assets/*.js` 里五个 emoji `🧮🐕🩺💰📊` **全部消失**（`stroke-width`、`aria-current` 命中）、新文案「前往财务设置」「往下滚到本页底部」「还没有批次。去「算」页一键建一个」全部命中。
+> **同一轮发现的一处小瑕疵（无害，如实记录）**：编译后的 CSS 里仍能搜到 6 条旧配色规则（`text-gray-400` 43 B、`text-gray-300` 43 B、`text-emerald-600` 49 B、`bg-emerald-600` 58 B、`text-red-500` 41 B、`text-amber-600` 45 B，**合计约 279 字节**）——来源是 `src/ui/contrast.test.ts` 里作为**字符串字面量**出现的禁 token 名被 Tailwind v4 的扫描器当成候选类名（`src/index.css` 全文只有 `@import "tailwindcss";`）。功能无影响；要清掉可用 `@source not` 排除测试文件、或把 token 拆开拼写。**更重要的是：这件事说明「编译后的 CSS 里没有旧类名」不能当达标证据** —— 达标证据是源码守卫测试 + 运行时探针（`contrast.test.ts` 的守卫看的是源码，不受扫描器影响）。
 
 ---
 
