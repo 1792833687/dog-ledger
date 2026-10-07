@@ -5377,6 +5377,19 @@ export function setBatchChannel(data: AppData, batchId: string, channel: Channel
 - [ ] **Step 4**：提交 README：`git add README.md` → `git commit -m "docs: README 补预定单与补账说明"`。
 - [ ] **Step 5**：推送 `master` 与 `gh-pages`，验证线上地址可用（打开、五个标签、旧数据在）。
 
+> **Task 30 实施记录（2026-10-03）—— 修订三收尾**
+> - **README 已改并提交** `fb782d6 docs: README 补预定单与补账说明`（1 file / +10 −4）：「五个页面」表格四行分别补了「算 → 或者直接**收货**建批次」「狗 → 页顶是**预定单**……到日子会提醒『该去收了』，收到狗时一键转成一个批次」「钱 → 最近流水**每一笔都能就地改或删**」「报 → 钱花在哪了、死亡率趋势」，并在表格后新增 `## 先做、后补账` 一节（收货只记收购款；运输/疫苗驱虫/检疫申报/病死犬处理费回来在批次详情「补成本」填一次，运输一整批一笔、其余按每只单价、只新增不动手记的账；没补过的批次在「狗」页挂橙字）。**「五个页面」这个数字没改**（预定单在「狗」页里）。
+> - **走查找出并修掉的唯一产品缺陷**：`src/ui/pages/BackupPanel.tsx` 的「确认覆盖」原本是 `replaceAll(restored)`，而备份文件里的 `lastBackupAt` 是**导出那一刻**的值（夹具里是 `null`）——于是用户刚刚用备份把自己救回来，面板上却写「从未备份过」、黄色横幅还催他再备份一次。改成 `replaceAll({ ...restored, settings: { ...restored.settings, lastBackupAt: new Date().toISOString() } })`，提交 `89117f8 fix(ui): 恢复备份后不再说「从未备份过」`（1 file / +8 −1）。这正是 Task 14 遗留清单里那条「lastBackupAt resets on restore」。
+> - **三条门禁（修复之后重跑）**：`Test Files 28 passed (28)` / `Tests 743 passed (743)`；`✓ 58 modules transformed` / `index-Bdff1Hhl.js` 319.70 kB / gzip 95.75 kB；`npx oxlint --format=default` `Found 0 warnings and 0 errors.`（75 files）；`git status --short` 只有 `README.md` 与 `src/ui/pages/BackupPanel.tsx` 两个在途文件（随后各自提交）。
+> - **控制器 CDP 走查：三条探针、同一次构建、一遍全绿 —— 171/171 PASS，0 条 `Runtime.exceptionThrown`，0 条 `console.error`。**
+>   - `dogledger-t27.mjs`（PORT 9355）**90/90** —— 预定单全流程（空态唯一入口 / 记单三条红字 / `  老李  ` 存成 `老李` / +3 天「还有 3 天去收」+ 页顶提醒 / +5 天「还没到日子」不提醒 / 今天「今天去收」/ 昨天「已经过期 1 天」/ 设置面板把提前天数改成 7 而 `-1` 不写库 / 预定中能删 / 收货建批次（默认预填约定只数、批次名带 `HH:MM`、`source='老李'`、留痕「少 1 只」、狗号带批次名、两笔 80000 分、转 `received`、无「删掉」、只能改备注）/ 黄了 / reload 后全在 / 批次详情「卖家：老李」「少 1 只」/ 补成本折叠态「¥1,600 · 共 2 笔」与橙字 / 「将新增 1 笔 · ¥400」与确认弹窗 / 橙字消失并变「¥2,000 · 共 3 笔」/ A 批填 999 不提交 → 退回列表 → B 批运输框为空）。
+>   - `dogledger-t29.mjs`（PORT 9357）**42/42** —— 默认只渲染 60 笔与「还有 7 笔更早的 · 显示全部」；改一笔（标题「改这一笔」、带出 `1234`、「原来记的是 ¥1,234」、`abc` → 红字 + 保存禁用、`0` 合法、改成 2000 → 库里 200000 分且原值消失、笔数不变、第一行 ¥2,000、**池子现金正好少 ¥766**）；删销售流水（弹窗「删掉这一笔？」+「删了就没有撤销」+「这只狗会回到在库」、不提退款、「算了」不删、确认后 66 笔且 `d2` 回 `in_stock`、另两只不受牵连、批次卡变「在库 3 · 已售 0」）；普通支出删除文案不写「回到在库」；展开后 66 行且按钮消失。
+>   - `dogledger-t30.mjs`（PORT 9359）**39/39** —— ①**旧数据兼容**：写一个**没有 `preOrders`、没有 `preOrderLeadDays`、连 `costItems` 都没有**的 `AppData`，刷新后五个标签页都能开、「狗」页不空白（「在库 1 · 已售 1」）、「检」页下拉里有那一批、「钱」页每行都有「改」「删」、「报」页照常出分账与成本结构、预定单区显示空态按钮（`normalizeAppData` 补默认值：`src/domain/normalize.ts:30-46`）；②**导出 → 真清站点数据（CDP `Storage.clearDataForOrigin`）→ 导入**：导出的 JSON 里含 `"preOrders"` 与「老李」「后院那窝」，清空后狗页/钱页回空态且库里确实读到 `null`，导入时弹「恢复备份？」（写明会覆盖、撤销不了），点「确认覆盖」后流水/批次/预定单**逐条还原**（含只数、日期、备注、特征、状态），卡片写着「还有 3 天去收」，备份状态行变成「今天备份过」（这一条就是这个修复的验收）。
+> - 探针归档 `.superpowers/sdd/2026-10-02-dog-ledger/probes/`（`dogledger-t27.mjs` / `dogledger-t29.mjs` / `dogledger-t30.mjs`）；跑法统一：`npm run build` → `npx vite preview --port 5199 --strictPort`（后台作业，跑完 `job_kill`）→ `node %TEMP%\dogledger-tXX.mjs`。
+> - **探针第 9 次同类教训（这次是产品与探针各占一半）**：「恢复后显示今天备份过」既是探针期望、也是产品行为——探针先按**正确行为**写期望，再修产品；教训是「期望与现状不一致时，先问哪一边才是对的」，而不是默认产品错或默认探针错。
+> - **重新上线**：`npm run build` → 推 `master` → 产物推 `gh-pages`（`DEPLOY.md` 的流程：临时目录 `git init -b gh-pages` + `git push --force`）。推送当时 `github.com:443` 被间歇阻断（`error: RPC failed; curl 28 Failed to connect to github.com:443`），改用后台重试脚本（最多 40 次、间隔 20 秒；脚本在 `.superpowers/sdd/2026-10-02-dog-ledger/push.ps1`，`.superpowers/` 不进 git）。线上地址不变：**https://1792833687.github.io/dog-ledger/**。
+> - **本次改动对上的提交**：源码 `master` = `89117f8`；`gh-pages` 上是它构建出的 `dist/`（`index-Bdff1Hhl.js`）。
+
 ---
 
 ### Task 14: 备份安全网 + PWA + 上线
