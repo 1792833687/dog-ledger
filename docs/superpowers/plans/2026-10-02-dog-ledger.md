@@ -5580,6 +5580,11 @@ export function setBatchChannel(data: AppData, batchId: string, channel: Channel
   git commit -m "feat: 离线可打开，存储失败不再悄悄吞掉"
   ```
 
+> **控制器在实施者提交前的复核（两条，写进验收）**：
+> 1. **`activate` 不能删同源上别人的缓存**。线上 origin 是 `1792833687.github.io`，**与用户名下其它 GitHub Pages 项目共用**；`caches.keys()` 里凡是 `key !== CACHE` 就删，等于顺手破坏兄弟项目的离线。改成带前缀：`const CACHE_PREFIX = 'dog-ledger-'; const CACHE = CACHE_PREFIX + 'v1'`，`activate` 里只删 `key.startsWith(CACHE_PREFIX) && key !== CACHE`。
+> 2. **同源判断要解析 URL，别用前缀**。`request.url.startsWith(self.location.origin)` 对 `https://1792833687.github.io.evil.com/x.js` 也为真；用 `new URL(request.url).origin !== self.location.origin` 再 `return`。
+> 两处都对的两件事要保留：navigate 走 **network-first**（纯 cache-first 会在服务器更新后拿旧 HTML 去引一个已被删掉的哈希文件 → 「有网却白屏」）、只缓存 `response.ok`。
+
 ---
 
 ### Task 34: 弹窗与表单的无障碍语义
