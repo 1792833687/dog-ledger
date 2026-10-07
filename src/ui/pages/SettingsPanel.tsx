@@ -80,14 +80,14 @@ export function SettingsPanel() {
                 />
                 <span className="text-xs text-gray-500">%</span>
               </div>
-              {ratioError !== undefined && <p className="mt-0.5 text-xs text-red-500">{ratioError}</p>}
+              {ratioError !== undefined && <p className="mt-0.5 text-xs text-red-700">{ratioError}</p>}
             </div>
           )
         })}
       </div>
 
       {s.partners.length === 0 && (
-        <p className="mt-2 text-xs text-amber-600">
+        <p className="mt-2 text-xs text-amber-700">
           还没有合伙人。没有人的话，注资、报销、分红都不知道该记在谁名下。
         </p>
       )}
@@ -149,7 +149,7 @@ export function SettingsPanel() {
           }}
         />
       </div>
-      <p className="mt-2 text-xs text-gray-400">
+      <p className="mt-2 text-xs text-gray-500">
         这两项会预填到「算」页面。填 0 表示还不知道——检疫费与抗体检测价格请先向当地动物卫生监督机构问清。
       </p>
 
@@ -171,7 +171,7 @@ export function SettingsPanel() {
             void update(d => updateSettings(d, { rabiesWaitDays: days }))
           }}
         />
-        <p className="text-xs text-gray-400">
+        <p className="text-xs text-gray-500">
           免疫后要满这个天数才能采血/申报。默认 21 不是法定天数——查过《犬产地检疫规程》与《狂犬病防治技术规范》两份原文，都只写「在有效保护期内」「每年加强免疫一次」，没有具体天数。以给你做抗体检测的实验室和当地动物卫生监督机构的答复为准，问清了就改成真值。
         </p>
         <Field
@@ -187,7 +187,7 @@ export function SettingsPanel() {
             void update(d => updateSettings(d, { quarantineLeadDays: days }))
           }}
         />
-        <p className="text-xs text-gray-400">
+        <p className="text-xs text-gray-500">
           出售前要提前这么多天申报检疫（《动物检疫管理办法》第八条第二款是三天，《犬产地检疫规程》4.1 也是三天）。
         </p>
       </div>
@@ -208,7 +208,7 @@ export function SettingsPanel() {
             void update(d => updateSettings(d, { preOrderLeadDays: days }))
           }}
         />
-        <p className="text-xs text-gray-400">
+        <p className="text-xs text-gray-500">
           默认 3 天。想提前一周就改成 7。
         </p>
       </div>
@@ -226,7 +226,7 @@ export function SettingsPanel() {
       </ul>
       <div className="mt-2 flex items-center gap-2">
         <input
-          className="flex-1 rounded-md bg-gray-100 px-2 py-1.5 text-sm outline-none"
+          className="flex-1 rounded-md bg-gray-100 px-2 py-1.5 text-sm outline-none placeholder:text-gray-600"
           placeholder="新增成本项，如 狗粮"
           value={newItemName}
           onChange={e => setNewItemName(e.target.value)}
@@ -241,7 +241,7 @@ export function SettingsPanel() {
         </select>
         <button
           type="button"
-          className="rounded-md bg-emerald-600 px-3 py-1.5 text-sm font-semibold text-white disabled:opacity-40"
+          className="rounded-md bg-emerald-700 px-3 py-1.5 text-sm font-semibold text-white disabled:opacity-40"
           disabled={!newItemName.trim()}
           onClick={() => {
             void update(d => addCostItem(d, newItemName.trim(), newItemScope))
@@ -251,12 +251,12 @@ export function SettingsPanel() {
           加
         </button>
       </div>
-      <p className="mt-2 text-xs text-gray-400">
+      <p className="mt-2 text-xs text-gray-500">
         新增的成本项会出现在「钱」页面记支出时的下拉里。
       </p>
 
-      {error !== null && <p className="mt-2 text-xs text-red-500">{error}</p>}
-      <p className="mt-2 text-xs text-gray-400">
+      {error !== null && <p className="mt-2 text-xs text-red-700">{error}</p>}
+      <p className="mt-2 text-xs text-gray-500">
         分成比例之和必须是 100%，否则不让你保存。改比例不会动已经发生过的账。
       </p>
     </details>

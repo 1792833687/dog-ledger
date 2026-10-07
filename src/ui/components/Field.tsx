@@ -27,10 +27,10 @@ export function Field({
             inputMode={inputMode}
             onChange={e => onChange(e.target.value)}
           />
-          {suffix && <span className="text-xs text-gray-400">{suffix}</span>}
+          {suffix && <span className="text-xs text-gray-500">{suffix}</span>}
         </span>
       </span>
-      {error && <span className="mt-1 block text-right text-xs text-red-500">{error}</span>}
+      {error && <span className="mt-1 block text-right text-xs text-red-700">{error}</span>}
     </label>
   )
 }

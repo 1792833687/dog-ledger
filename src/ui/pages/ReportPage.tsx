@@ -29,8 +29,8 @@ function trendDeltaText(delta: number | null): string {
 
 /** 死亡率涨了是坏事（红），降了是好事（绿），没有可比对象或持平就低调一点。 */
 function trendDeltaClass(delta: number | null): string {
-  if (delta === null || delta === 0) return 'text-gray-400'
-  return delta > 0 ? 'text-red-500' : 'text-emerald-600'
+  if (delta === null || delta === 0) return 'text-gray-500'
+  return delta > 0 ? 'text-red-700' : 'text-emerald-700'
 }
 
 /**
@@ -115,7 +115,7 @@ export function ReportPage() {
 
       <button
         type="button"
-        className="mt-3 w-full rounded-xl bg-emerald-600 py-3 text-sm font-semibold text-white disabled:opacity-40"
+        className="mt-3 w-full rounded-xl bg-emerald-700 py-3 text-sm font-semibold text-white disabled:opacity-40"
         disabled={busy}
         onClick={shareReceipt}
       >
@@ -134,7 +134,7 @@ export function ReportPage() {
         </div>
         <div className="rounded-xl bg-white p-3 shadow-sm">
           <div className="text-xs text-gray-500">净利</div>
-          <div className={`mt-0.5 text-lg font-semibold ${s.netProfit >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
+          <div className={`mt-0.5 text-lg font-semibold ${s.netProfit >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
             {formatMoney(s.netProfit)}
           </div>
         </div>
@@ -151,7 +151,7 @@ export function ReportPage() {
         <div className="mt-2 overflow-hidden rounded-xl bg-white shadow-sm">
           <table className="w-full text-sm">
             <thead>
-              <tr className="text-xs text-gray-400">
+              <tr className="text-xs text-gray-500">
                 <th className="px-3 py-2 text-left font-normal">合伙人</th>
                 <th className="px-3 py-2 text-right font-normal">应分</th>
                 <th className="px-3 py-2 text-right font-normal">已分红</th>
@@ -163,11 +163,11 @@ export function ReportPage() {
                 <tr key={p.id} className="border-t border-gray-100">
                   <td className="px-3 py-2">
                     {p.name}
-                    <span className="ml-1 text-xs text-gray-400">{(p.shareRatio * 100).toFixed(0)}%</span>
+                    <span className="ml-1 text-xs text-gray-500">{(p.shareRatio * 100).toFixed(0)}%</span>
                   </td>
                   <td className="px-3 py-2 text-right font-semibold">{formatMoney(p.claimable)}</td>
                   <td className="px-3 py-2 text-right text-gray-600">{formatMoney(p.distributed)}</td>
-                  <td className={`px-3 py-2 text-right ${p.advance > 0 ? 'text-amber-600' : 'text-gray-400'}`}>
+                  <td className={`px-3 py-2 text-right ${p.advance > 0 ? 'text-amber-700' : 'text-gray-500'}`}>
                     {formatMoney(p.advance)}
                   </td>
                 </tr>
@@ -191,12 +191,12 @@ export function ReportPage() {
                 <li key={batch.id} className="flex items-center justify-between px-3 py-2 text-sm">
                   <div>
                     <div>{batch.name}</div>
-                    <div className="text-xs text-gray-400">
+                    <div className="text-xs text-gray-500">
                       {batch.date} · 共 {total} 只 · 死亡 {summary.dead} 只
                       {total > 0 && ` · 死亡率 ${((summary.dead / total) * 100).toFixed(1)}%`}
                     </div>
                   </div>
-                  <div className={summary.netProfitFen >= 0 ? 'text-emerald-600' : 'text-red-500'}>
+                  <div className={summary.netProfitFen >= 0 ? 'text-emerald-700' : 'text-red-700'}>
                     {formatMoney(summary.netProfitFen)}
                   </div>
                 </li>
@@ -208,7 +208,7 @@ export function ReportPage() {
 
       <h2 className="mt-6 text-sm font-semibold text-gray-700">钱花在哪了</h2>
       {costs.length === 0 ? (
-        <p className="mt-2 rounded-xl bg-white p-3 text-xs text-gray-400 shadow-sm">还没有数据</p>
+        <p className="mt-2 rounded-xl bg-white p-3 text-xs text-gray-500 shadow-sm">还没有数据</p>
       ) : (
         <ul className="mt-2 divide-y divide-gray-100 rounded-xl bg-white shadow-sm">
           {costs.map(c => (
@@ -225,7 +225,7 @@ export function ReportPage() {
                     style={{ width: percentText(c.share) }}
                   />
                 </div>
-                <span className="w-12 text-right text-xs text-gray-400">{percentText(c.share)}</span>
+                <span className="w-12 text-right text-xs text-gray-500">{percentText(c.share)}</span>
               </div>
             </li>
           ))}
@@ -234,13 +234,13 @@ export function ReportPage() {
 
       <h2 className="mt-6 text-sm font-semibold text-gray-700">死亡率趋势</h2>
       {trend.length === 0 ? (
-        <p className="mt-2 rounded-xl bg-white p-3 text-xs text-gray-400 shadow-sm">还没有数据</p>
+        <p className="mt-2 rounded-xl bg-white p-3 text-xs text-gray-500 shadow-sm">还没有数据</p>
       ) : (
         <ul className="mt-2 divide-y divide-gray-100 rounded-xl bg-white shadow-sm">
           {trend.map(p => (
             <li key={p.batchId} className="px-3 py-2 text-sm">
               <div>{p.name}</div>
-              <div className="text-xs text-gray-400">
+              <div className="text-xs text-gray-500">
                 {p.date} · {p.total} 只里死了 {p.dead} 只（{percentText(p.rate)}）
               </div>
               {/* 这一节存在的理由就是这一行：排行块已经给了同样的三个数，

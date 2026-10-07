@@ -11,7 +11,7 @@ function Shell() {
   const [tab, setTab] = useState<TabKey>(DEFAULT_TAB)
 
   if (!ready) {
-    return <div className="flex h-dvh items-center justify-center text-gray-400">正在载入…</div>
+    return <div className="flex h-dvh items-center justify-center text-gray-500">正在载入…</div>
   }
 
   // 页面从同一份 TABS 清单里取，所以加第 5 个标签（Task 17 的「检」）不需要动这里。

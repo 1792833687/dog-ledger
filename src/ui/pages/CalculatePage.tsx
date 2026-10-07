@@ -28,7 +28,7 @@ function MiniMoney({
 }) {
   return (
     <label className="flex items-center justify-between gap-1">
-      <span className="shrink-0 text-[10px] text-gray-400">{label}</span>
+      <span className="shrink-0 text-[10px] text-gray-500">{label}</span>
       <span className="flex items-center gap-1">
         <input
           className="w-16 rounded-md bg-gray-100 px-1.5 py-1 text-right text-xs outline-none focus:bg-white focus:ring-1 focus:ring-emerald-500"
@@ -36,7 +36,7 @@ function MiniMoney({
           value={value}
           onChange={e => onChange(e.target.value)}
         />
-        <span className="text-[10px] text-gray-400">元</span>
+        <span className="text-[10px] text-gray-500">元</span>
       </span>
     </label>
   )
@@ -191,7 +191,7 @@ export function CalculatePage() {
           label="打算卖多少钱一只" value={form.targetPrice} onChange={set('targetPrice')}
           suffix="元" error={errors.targetPrice}
         />
-        <p className="mt-2 text-xs text-gray-400">
+        <p className="mt-2 text-xs text-gray-500">
           检疫是法定前置：没有《动物检疫合格证明》就出售，按《动物防疫法》第九十七条最高可处货值 15~30 倍罚款，
           货值不足一万元的处 5 万~15 万，负责人 5 年内不得从事相关活动。这一栏填 0，上面的「低于这个价别卖」就偏低。
         </p>
@@ -202,20 +202,20 @@ export function CalculatePage() {
           上面有填错的地方，改好才能算保本价。
         </section>
       ) : (
-        <section className="mt-4 rounded-xl bg-emerald-600 p-4 text-white shadow-sm">
-          <div className="text-xs opacity-80">低于这个价别卖</div>
+        <section className="mt-4 rounded-xl bg-emerald-700 p-4 text-white shadow-sm">
+          <div className="text-xs text-emerald-50">低于这个价别卖</div>
           <div className="mt-1 text-3xl font-bold">{formatMoney(result.breakEvenPriceFen)}</div>
           <div className="mt-3 grid grid-cols-3 gap-2 text-center text-xs">
             <div>
-              <div className="opacity-80">预估总成本</div>
+              <div className="text-emerald-50">预估总成本</div>
               <div className="mt-0.5 text-sm font-semibold">{formatMoney(result.totalCost)}</div>
             </div>
             <div>
-              <div className="opacity-80">预估存活</div>
+              <div className="text-emerald-50">预估存活</div>
               <div className="mt-0.5 text-sm font-semibold">{result.expectedAlive.toFixed(1)} 只</div>
             </div>
             <div>
-              <div className="opacity-80">建议售价</div>
+              <div className="text-emerald-50">建议售价</div>
               <div className="mt-0.5 text-sm font-semibold">{formatMoney(result.suggestedPriceFen)}</div>
             </div>
           </div>
@@ -227,7 +227,7 @@ export function CalculatePage() {
           <h2 className="text-sm font-semibold text-gray-700">卖不掉怎么办</h2>
           <table className="mt-2 w-full text-sm">
             <thead>
-              <tr className="text-xs text-gray-400">
+              <tr className="text-xs text-gray-500">
                 <th className="text-left font-normal">只卖掉</th>
                 <th className="text-right font-normal">收入</th>
                 <th className="text-right font-normal">盈亏</th>
@@ -239,10 +239,10 @@ export function CalculatePage() {
                 <tr key={s.soldCount} className="border-t border-gray-100">
                   <td className="py-2">{s.soldCount} 只</td>
                   <td className="py-2 text-right">{formatMoney(s.revenue)}</td>
-                  <td className={`py-2 text-right font-semibold ${s.profitFen >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
+                  <td className={`py-2 text-right font-semibold ${s.profitFen >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
                     {formatMoney(s.profitFen)}
                   </td>
-                  <td className={`py-2 text-right ${s.perPartnerFen >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
+                  <td className={`py-2 text-right ${s.perPartnerFen >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
                     {formatMoney(s.perPartnerFen)}
                   </td>
                 </tr>
@@ -262,7 +262,7 @@ export function CalculatePage() {
             <span className="text-sm font-semibold text-gray-700">
               渠道对照 {channelsOpen ? '▾' : '▸'}
             </span>
-            <span className="text-right text-xs text-gray-400">
+            <span className="text-right text-xs text-gray-500">
               {/* 折叠着也要看得见选了哪条路：下面那个按钮照样会带着它建批次。 */}
               <span className="block font-semibold text-gray-600">
                 去向：{channelName(selectedChannel)}
@@ -301,13 +301,13 @@ export function CalculatePage() {
               </label>
 
               {breakdown === null ? (
-                <p className="mt-3 text-xs text-red-500">
+                <p className="mt-3 text-xs text-red-700">
                   存活数填的不是整数（几只狗只能是整数），改好才能算渠道对照。
                 </p>
               ) : (
                 <table className="mt-3 w-full text-xs">
                   <thead>
-                    <tr className="text-gray-400">
+                    <tr className="text-gray-500">
                       <th className="text-left font-normal">走哪条路</th>
                       <th className="text-left font-normal">价格假设（元）</th>
                       <th className="text-right font-normal">算出来</th>
@@ -335,7 +335,7 @@ export function CalculatePage() {
                               />
                               <span>
                                 <span className="block text-sm text-gray-700">{c.name}</span>
-                                <span className="mt-0.5 block text-[10px] leading-tight text-gray-400">
+                                <span className="mt-0.5 block text-[10px] leading-tight text-gray-500">
                                   {c.note}
                                 </span>
                               </span>
@@ -347,20 +347,20 @@ export function CalculatePage() {
                               <MiniMoney label="每只额外" value={row.extraPerDog} onChange={setRow(c.id, 'extraPerDog')} />
                               <MiniMoney label="该渠道固定" value={row.fixedCost} onChange={setRow(c.id, 'fixedCost')} />
                             </div>
-                            {bad && <div className="mt-1 text-right text-red-500">这不像数字</div>}
+                            {bad && <div className="mt-1 text-right text-red-700">这不像数字</div>}
                           </td>
                           <td className="py-2 text-right">
                             {bad || b === null ? (
-                              <span className="text-gray-400">—</span>
+                              <span className="text-gray-500">—</span>
                             ) : (
                               <>
                                 <div className="text-gray-700">保本 {formatMoney(b.breakEvenUnitPriceFen)}</div>
-                                <div className={`font-semibold ${b.isLoss ? 'text-red-500' : 'text-emerald-600'}`}>
+                                <div className={`font-semibold ${b.isLoss ? 'text-red-700' : 'text-emerald-700'}`}>
                                   {b.isLoss
                                     ? `亏 ${formatMoney(Math.abs(b.perDogProfitFen))}`
                                     : `赚 ${formatMoney(b.perDogProfitFen)}`}
                                 </div>
-                                <div className="text-[10px] text-gray-400">
+                                <div className="text-[10px] text-gray-500">
                                   固定成本每只摊 {formatMoney(b.fixedPerDogFen)}
                                 </div>
                               </>
@@ -373,7 +373,7 @@ export function CalculatePage() {
                 </table>
               )}
 
-              <p className="mt-2 text-xs text-gray-400">
+              <p className="mt-2 text-xs text-gray-500">
                 底价用的是上面那个保本价（{formatMoney(result.breakEvenPriceFen)}）。
                 固定成本按上面的存活数摊到每只身上 —— 摊位费填多少，这里就摊多少。
               </p>
@@ -392,7 +392,7 @@ export function CalculatePage() {
       </button>
 
       {created && (
-        <p className="mt-2 text-center text-xs text-emerald-600">
+        <p className="mt-2 text-center text-xs text-emerald-700">
           已收货，批次「{created.name}」，去向「{channelName(created.channel)}」。到「狗」标签页记账。
         </p>
       )}
@@ -413,7 +413,7 @@ export function CalculatePage() {
           type="button"
           onClick={handleReceive}
           disabled={!receiveReady}
-          className="mt-3 w-full rounded-xl bg-emerald-600 py-3 text-sm font-semibold text-white disabled:opacity-40"
+          className="mt-3 w-full rounded-xl bg-emerald-700 py-3 text-sm font-semibold text-white disabled:opacity-40"
         >
           收货
         </button>

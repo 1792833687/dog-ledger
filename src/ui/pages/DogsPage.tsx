@@ -56,14 +56,15 @@ const STATUS_LABEL: Record<string, string> = {
  * 颜色上两者仍然同一档：对要出门收狗的两个人来说，急的事是同一件。
  */
 const PRE_ORDER_STAGE_CLASS: Record<PreOrderStage, string> = {
-  upcoming: 'text-gray-400',
-  due_soon: 'text-red-500',
-  overdue: 'text-red-500',
-  received: 'text-emerald-600',
-  cancelled: 'text-gray-400',
+  upcoming: 'text-gray-500',
+  due_soon: 'text-red-700',
+  overdue: 'text-red-700',
+  received: 'text-emerald-700',
+  cancelled: 'text-gray-500',
 }
 
-const PRE_ORDER_FORM_INPUT = 'w-full rounded-lg bg-gray-100 px-3 py-2 text-sm outline-none'
+const PRE_ORDER_FORM_INPUT =
+  'w-full rounded-lg bg-gray-100 px-3 py-2 text-sm outline-none placeholder:text-gray-600'
 
 /**
  * 本机时区的今天，`YYYY-MM-DD`。不要用 `toISOString().slice(0, 10)`——那是 UTC，
@@ -330,7 +331,7 @@ export function DogsPage() {
 
         <div className="mt-4 flex gap-2">
           <input
-            className="flex-1 rounded-lg bg-white px-3 py-2 text-sm shadow-sm outline-none"
+            className="flex-1 rounded-lg bg-white px-3 py-2 text-sm shadow-sm outline-none placeholder:text-gray-500"
             placeholder="新批次名称，如 10月3日李村"
             value={newBatchName}
             onChange={e => setNewBatchName(e.target.value)}
@@ -378,13 +379,13 @@ export function DogsPage() {
               </div>
 
               {preOrderDueCount > 0 && (
-                <p className="mt-1 text-sm font-semibold text-red-500">
+                <p className="mt-1 text-sm font-semibold text-red-700">
                   有 {preOrderDueCount} 张该去收了
                 </p>
               )}
 
               {receiveDone !== null && (
-                <p className="mt-1 text-sm text-emerald-600">已收货，批次：{receiveDone}</p>
+                <p className="mt-1 text-sm text-emerald-700">已收货，批次：{receiveDone}</p>
               )}
 
               {preOrderDraft !== null && (
@@ -443,7 +444,7 @@ export function DogsPage() {
                     )}
                   </div>
                   {preOrderIssue !== null && (
-                    <p className="mt-1 text-xs text-red-500">{preOrderIssue}</p>
+                    <p className="mt-1 text-xs text-red-700">{preOrderIssue}</p>
                   )}
                   <div className="mt-3 flex gap-2">
                     <button
@@ -500,7 +501,7 @@ export function DogsPage() {
                             type="button"
                             // 过了日子的那张，「收货」用绿色主色顶出来：今天最该点的就是它。
                             className={`flex-1 rounded-lg py-2 text-xs font-semibold text-white ${
-                              stage === 'overdue' ? 'bg-emerald-600' : 'bg-gray-900'
+                              stage === 'overdue' ? 'bg-emerald-700' : 'bg-gray-900'
                             }`}
                             onClick={() => openReceivePreOrder(order)}
                           >
@@ -531,7 +532,7 @@ export function DogsPage() {
                         <div className="mt-1 flex justify-end">
                           <button
                             type="button"
-                            className="rounded-lg bg-gray-100 px-3 py-1.5 text-xs font-semibold text-red-500"
+                            className="rounded-lg bg-gray-100 px-3 py-1.5 text-xs font-semibold text-red-700"
                             onClick={() => openDeletePreOrder(order.id)}
                           >
                             删掉
@@ -541,7 +542,7 @@ export function DogsPage() {
 
                       {order.status === 'received' && (
                         <div className="mt-2 flex flex-wrap items-center gap-2">
-                          <span className="text-sm font-semibold text-emerald-600">已收货</span>
+                          <span className="text-sm font-semibold text-emerald-700">已收货</span>
                           {batch !== null && (
                             <button
                               type="button"
@@ -569,7 +570,7 @@ export function DogsPage() {
                         <div className="mt-2 flex justify-end">
                           <button
                             type="button"
-                            className="rounded-lg bg-gray-100 px-3 py-1.5 text-xs font-semibold text-red-500"
+                            className="rounded-lg bg-gray-100 px-3 py-1.5 text-xs font-semibold text-red-700"
                             onClick={() => openDeletePreOrder(order.id)}
                           >
                             删掉
@@ -605,7 +606,7 @@ export function DogsPage() {
                 >
                   <div className="flex items-baseline justify-between">
                     <span className="font-semibold">{b.name}</span>
-                    <span className={`text-sm font-semibold ${s.netProfitFen >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
+                    <span className={`text-sm font-semibold ${s.netProfitFen >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
                       {formatMoney(s.netProfitFen)}
                     </span>
                   </div>
@@ -618,7 +619,7 @@ export function DogsPage() {
             )
           })}
           {data.batches.length === 0 && (
-            <li className="rounded-xl bg-white p-6 text-center text-sm text-gray-400">
+            <li className="rounded-xl bg-white p-6 text-center text-sm text-gray-500">
               还没有批次。去「算」标签页一键建一个。
             </li>
           )}
@@ -627,31 +628,31 @@ export function DogsPage() {
         <Modal open={receivingId !== null} title="收货" onClose={closePreOrderPanels}>
           <input
             autoFocus
-            className="w-full rounded-lg bg-gray-100 px-3 py-2 text-lg outline-none"
+            className="w-full rounded-lg bg-gray-100 px-3 py-2 text-lg outline-none placeholder:text-gray-600"
             inputMode="numeric"
             placeholder="实收只数"
             value={receiveCount}
             onChange={e => setReceiveCount(e.target.value)}
           />
           {receiveCountInvalid && (
-            <p className="mt-1 text-xs text-red-500">只数得是整数，而且至少 1 只（狗只有整只）</p>
+            <p className="mt-1 text-xs text-red-700">只数得是整数，而且至少 1 只（狗只有整只）</p>
           )}
           <input
-            className="mt-2 w-full rounded-lg bg-gray-100 px-3 py-2 text-sm outline-none"
+            className="mt-2 w-full rounded-lg bg-gray-100 px-3 py-2 text-sm outline-none placeholder:text-gray-600"
             inputMode="decimal"
             placeholder="每只收购价（元，空着按 0 算）"
             value={receivePrice}
             onChange={e => setReceivePrice(e.target.value)}
           />
           {receivePriceInvalid && (
-            <p className="mt-1 text-xs text-red-500">这不像一个数字，请重新填（只填元的数，如 800）</p>
+            <p className="mt-1 text-xs text-red-700">这不像一个数字，请重新填（只填元的数，如 800）</p>
           )}
           <p className="mt-2 text-xs text-gray-500">
             确认后会建一个批次把这几只放进去，批次名自动带上收货的时刻。
           </p>
           <button
             type="button"
-            className="mt-3 w-full rounded-xl bg-emerald-600 py-3 text-sm font-semibold text-white disabled:opacity-40"
+            className="mt-3 w-full rounded-xl bg-emerald-700 py-3 text-sm font-semibold text-white disabled:opacity-40"
             disabled={receiveCountParsed === null || receiveCountParsed < 1 || receivePriceInvalid}
             onClick={confirmReceivePreOrder}
           >
@@ -662,7 +663,7 @@ export function DogsPage() {
         <Modal open={cancelingId !== null} title="这张预定单黄了？" onClose={closePreOrderPanels}>
           <input
             autoFocus
-            className="w-full rounded-lg bg-gray-100 px-3 py-2 text-sm outline-none"
+            className="w-full rounded-lg bg-gray-100 px-3 py-2 text-sm outline-none placeholder:text-gray-600"
             placeholder="不写原因也行，以后自己看得懂就行"
             value={cancelReason}
             onChange={e => setCancelReason(e.target.value)}
@@ -827,7 +828,7 @@ export function DogsPage() {
           />
         )}
       </h1>
-      {batchNameBlank && <p className="mt-1 text-xs text-red-500">批次名不能是空的</p>}
+      {batchNameBlank && <p className="mt-1 text-xs text-red-700">批次名不能是空的</p>}
       <div className="mt-1 flex items-center gap-2 text-xs text-gray-500">
         <span>{batch.date} · 去向：</span>
         {/* 批次打算走哪条路。之前这里直接把 channelId 印给用户看（`去向：pet_shop`）。
@@ -855,17 +856,17 @@ export function DogsPage() {
         <p className="mt-1 text-xs text-gray-500">卖家：{batch.source.trim()}</p>
       )}
       {batch.note.trim() !== '' && (
-        <p className="mt-0.5 text-xs text-gray-400">{batch.note.trim()}</p>
+        <p className="mt-0.5 text-xs text-gray-500">{batch.note.trim()}</p>
       )}
 
       <div className="mt-3 rounded-xl bg-white p-4 shadow-sm">
         <div className="grid grid-cols-2 gap-3 text-sm">
           <div><span className="text-gray-500">总成本</span> <b>{formatMoney(summary.totalCost)}</b></div>
           <div><span className="text-gray-500">已收款</span> <b>{formatMoney(summary.income)}</b></div>
-          <div><span className="text-gray-500">死亡损耗</span> <b className="text-red-500">{formatMoney(summary.deadLoss)}</b></div>
+          <div><span className="text-gray-500">死亡损耗</span> <b className="text-red-700">{formatMoney(summary.deadLoss)}</b></div>
           <div>
             <span className="text-gray-500">盈亏</span>{' '}
-            <b className={summary.netProfitFen >= 0 ? 'text-emerald-600' : 'text-red-500'}>
+            <b className={summary.netProfitFen >= 0 ? 'text-emerald-700' : 'text-red-700'}>
               {formatMoney(summary.netProfitFen)}
             </b>
           </div>
@@ -874,7 +875,7 @@ export function DogsPage() {
           <div className="mt-3 rounded-lg bg-emerald-50 p-3">
             <div className="text-xs text-emerald-700">剩下的每只至少卖</div>
             <div className="text-2xl font-bold text-emerald-700">{formatMoney(summary.floorPriceFen)}</div>
-            <div className="text-xs text-emerald-600">整批才不亏</div>
+            <div className="text-xs text-emerald-700">整批才不亏</div>
           </div>
         )}
       </div>
@@ -896,7 +897,7 @@ export function DogsPage() {
                   {STATUS_LABEL[d.status]}
                   {/* 退回的狗又站在笼子里了（设计文档 :156），不提示的话用户会以为
                       这只已经卖出去的狗和自己无关，也不会去点「卖出」。 */}
-                  {d.status === 'returned' && <span className="ml-1 text-amber-600">· 回到在库，可再卖一次</span>}
+                  {d.status === 'returned' && <span className="ml-1 text-amber-700">· 回到在库，可再卖一次</span>}
                 </span>
               </div>
               <div className="mt-1 text-xs text-gray-500">
@@ -905,7 +906,7 @@ export function DogsPage() {
                     那笔收入还在账上，不显示的话这张卡看着像从没卖过。 */}
                 {income > 0 && (
                   <> · 售价 {formatMoney(income)} ·{' '}
-                    <span className={profit >= 0 ? 'text-emerald-600' : 'text-red-500'}>
+                    <span className={profit >= 0 ? 'text-emerald-700' : 'text-red-700'}>
                       {profit >= 0 ? '赚' : '亏'} {formatMoney(Math.abs(profit))}
                     </span>
                   </>
@@ -915,7 +916,7 @@ export function DogsPage() {
                 {onHand && (
                   <button
                     type="button"
-                    className="rounded-md bg-emerald-600 px-3 py-1 text-white"
+                    className="rounded-md bg-emerald-700 px-3 py-1 text-white"
                     onClick={() => { setSellingDogId(d.id); setPriceInput('') }}
                   >
                     卖出
@@ -957,7 +958,7 @@ export function DogsPage() {
                   </button>
                 )}
                 {d.status === 'sold' && refunded && (
-                  <span className="self-center text-gray-400">已记退款</span>
+                  <span className="self-center text-gray-500">已记退款</span>
                 )}
                 {/* 纠错入口。死 / 退回都只是记一笔状态，记错了必须能改回来——
                     否则点错一次这只狗就永远挂在错的状态上，账也跟着错。 */}
@@ -984,7 +985,7 @@ export function DogsPage() {
           )
         })}
         {dogs.length === 0 && (
-          <li className="rounded-xl bg-white p-6 text-center text-sm text-gray-400">
+          <li className="rounded-xl bg-white p-6 text-center text-sm text-gray-500">
             这一批还没有狗。用下面的按钮补录，或在「算」页面按只数一键建批次。
           </li>
         )}
@@ -1024,7 +1025,7 @@ export function DogsPage() {
       >
         + 记一笔批次支出
       </button>
-      <p className="mt-2 text-xs text-gray-400">
+      <p className="mt-2 text-xs text-gray-500">
         这里只记池子直接付掉的钱。合伙人先垫付的，去「钱」标签页记，那笔将来要从池子还给他。
       </p>
 
@@ -1039,7 +1040,7 @@ export function DogsPage() {
           onClick={() => setCostOpen(v => !v)}
         >
           <span className="text-sm font-semibold text-gray-700">补成本 {costOpen ? '▾' : '▸'}</span>
-          <span className="text-right text-xs text-gray-400">
+          <span className="text-right text-xs text-gray-500">
             {/* 常显行：金额与笔数都是派生值，补完账当场变大。两者都含收购款（设计 §3.10 的口径）。 */}
             <span className="block font-semibold text-gray-600">
               这一批已记成本 {formatMoney(costTotal)} · 共 {costEntryCount} 笔（含收购款）
@@ -1049,7 +1050,7 @@ export function DogsPage() {
         </button>
 
         {costIncomplete && (
-          <p className="mt-2 text-xs font-semibold text-amber-600">
+          <p className="mt-2 text-xs font-semibold text-amber-700">
             这一批还没补成本，保本价现在是偏低的
           </p>
         )}
@@ -1101,7 +1102,7 @@ export function DogsPage() {
             {/* 按钮为什么是灰的，得说出来：用户会以为界面坏了。
                 「只填了处理费但这一批没有死狗」也落在这一条上（那种情况确实没东西可补）。 */}
             {costPreview !== null && costPreview.count === 0 && (
-              <p className="mt-2 text-xs text-gray-400">
+              <p className="mt-2 text-xs text-gray-500">
                 填 0 的行不会记流水，所以现在没有要补的账。
               </p>
             )}
@@ -1125,18 +1126,18 @@ export function DogsPage() {
       >
         <input
           autoFocus
-          className="w-full rounded-lg bg-gray-100 px-3 py-2 text-lg outline-none"
+          className="w-full rounded-lg bg-gray-100 px-3 py-2 text-lg outline-none placeholder:text-gray-600"
           inputMode="decimal"
           placeholder="售价（元）"
           value={priceInput}
           onChange={e => setPriceInput(e.target.value)}
         />
         {priceInvalid && (
-          <p className="mt-1 text-xs text-red-500">这不像一个数字，请重新填（只填元的数，如 1200）</p>
+          <p className="mt-1 text-xs text-red-700">这不像一个数字，请重新填（只填元的数，如 1200）</p>
         )}
         <button
           type="button"
-          className="mt-3 w-full rounded-xl bg-emerald-600 py-3 text-sm font-semibold text-white disabled:opacity-40"
+          className="mt-3 w-full rounded-xl bg-emerald-700 py-3 text-sm font-semibold text-white disabled:opacity-40"
           disabled={priceParsed === null || sellingDogId === null}
           onClick={() => {
             const price = parseMoney(priceInput)
@@ -1153,14 +1154,14 @@ export function DogsPage() {
       <Modal open={expenseOpen} title="记一笔批次支出" onClose={() => setExpenseOpen(false)}>
         <input
           autoFocus
-          className="w-full rounded-lg bg-gray-100 px-3 py-2 text-lg outline-none"
+          className="w-full rounded-lg bg-gray-100 px-3 py-2 text-lg outline-none placeholder:text-gray-600"
           inputMode="decimal"
           placeholder="金额（元）"
           value={expenseAmount}
           onChange={e => setExpenseAmount(e.target.value)}
         />
         {expenseInvalid && (
-          <p className="mt-1 text-xs text-red-500">这不像一个数字，请重新填（只填元的数，如 400）</p>
+          <p className="mt-1 text-xs text-red-700">这不像一个数字，请重新填（只填元的数，如 400）</p>
         )}
 
         <select
@@ -1174,7 +1175,7 @@ export function DogsPage() {
         </select>
 
         <input
-          className="mt-2 w-full rounded-lg bg-gray-100 px-3 py-2 text-sm outline-none"
+          className="mt-2 w-full rounded-lg bg-gray-100 px-3 py-2 text-sm outline-none placeholder:text-gray-600"
           placeholder="备注（可留空）"
           value={expenseNote}
           onChange={e => setExpenseNote(e.target.value)}
@@ -1216,19 +1217,19 @@ export function DogsPage() {
 
         <input
           autoFocus
-          className="w-full rounded-lg bg-gray-100 px-3 py-2 text-lg outline-none"
+          className="w-full rounded-lg bg-gray-100 px-3 py-2 text-lg outline-none placeholder:text-gray-600"
           inputMode="decimal"
           placeholder="退回给客户的钱（元）"
           value={refundAmount}
           onChange={e => setRefundAmount(e.target.value)}
         />
         {refundInvalid && (
-          <p className="mt-1 text-xs text-red-500">这不像一个数字，请重新填（只填元的数，如 1200）</p>
+          <p className="mt-1 text-xs text-red-700">这不像一个数字，请重新填（只填元的数，如 1200）</p>
         )}
 
         {refundKeepSold && (
           <input
-            className="mt-2 w-full rounded-lg bg-gray-100 px-3 py-2 text-sm outline-none"
+            className="mt-2 w-full rounded-lg bg-gray-100 px-3 py-2 text-sm outline-none placeholder:text-gray-600"
             placeholder="备注（可留空）"
             value={refundNote}
             onChange={e => setRefundNote(e.target.value)}

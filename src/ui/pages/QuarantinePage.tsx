@@ -27,7 +27,8 @@ import type { DogQuarantinePatch } from '../../domain/actions'
  */
 const ROW = 'block border-b border-gray-100 py-2'
 const ROW_LABEL = 'text-xs text-gray-500'
-const ROW_INPUT = 'mt-1 w-full rounded-md bg-gray-100 px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-emerald-500'
+const ROW_INPUT =
+  'mt-1 w-full rounded-md bg-gray-100 px-2 py-1.5 text-sm outline-none placeholder:text-gray-600 focus:ring-2 focus:ring-emerald-500'
 
 export function QuarantinePage() {
   const { data, update } = useAppData()
@@ -47,7 +48,7 @@ export function QuarantinePage() {
     return (
       <div className="px-4 pb-6 pt-6">
         <h1 className="text-xl font-bold">检疫</h1>
-        <p className="mt-3 rounded-xl bg-white p-6 text-center text-sm text-gray-400">
+        <p className="mt-3 rounded-xl bg-white p-6 text-center text-sm text-gray-500">
           先去「算」页面建一个批次。
         </p>
       </div>
@@ -101,18 +102,18 @@ export function QuarantinePage() {
             <li key={d.id} className="rounded-xl bg-white p-3 shadow-sm">
               <div className="flex items-baseline justify-between">
                 <span className="font-semibold">{d.code}</span>
-                <span className={`text-sm font-semibold ${status.isSellable ? 'text-emerald-600' : 'text-amber-600'}`}>
+                <span className={`text-sm font-semibold ${status.isSellable ? 'text-emerald-700' : 'text-amber-700'}`}>
                   {status.label}
                 </span>
               </div>
 
               <div className="mt-1 text-xs text-gray-500">
                 {status.nextAction}
-                {d.status === 'returned' && <span className="ml-1 text-amber-600">· 退回的狗</span>}
+                {d.status === 'returned' && <span className="ml-1 text-amber-700">· 退回的狗</span>}
               </div>
 
               {status.daysUntilTestable !== null && (
-                <div className="mt-1 text-xs text-gray-400">
+                <div className="mt-1 text-xs text-gray-500">
                   还要等 {status.daysUntilTestable} 天才能采血送检
                 </div>
               )}
@@ -126,7 +127,7 @@ export function QuarantinePage() {
               )}
 
               {missingVaccinationDate && (
-                <div className="mt-1 text-xs text-gray-400">
+                <div className="mt-1 text-xs text-gray-500">
                   接种日期未记录（不影响出售，但能补就补上）
                 </div>
               )}
@@ -135,7 +136,7 @@ export function QuarantinePage() {
                 {action !== null && (
                   <button
                     type="button"
-                    className="rounded-md bg-emerald-600 px-3 py-1 text-white"
+                    className="rounded-md bg-emerald-700 px-3 py-1 text-white"
                     onClick={() => {
                       if (action.focusCert === true) {
                         if (!open) setExpanded(prev => [...prev, d.id])
@@ -227,7 +228,7 @@ export function QuarantinePage() {
           )
         })}
         {onHandDogs.length === 0 && (
-          <li className="rounded-xl bg-white p-6 text-center text-sm text-gray-400">
+          <li className="rounded-xl bg-white p-6 text-center text-sm text-gray-500">
             这一批目前没有在库的狗。
           </li>
         )}
@@ -236,7 +237,7 @@ export function QuarantinePage() {
       <h2 className="mt-6 text-sm font-semibold text-gray-700">出栏前检查</h2>
 
       {onHandCount === 0 ? (
-        <p className="mt-2 rounded-xl bg-white p-4 text-sm text-gray-400">
+        <p className="mt-2 rounded-xl bg-white p-4 text-sm text-gray-500">
           这一批目前没有在库的狗。
         </p>
       ) : checklist.blocked.length === 0 ? (

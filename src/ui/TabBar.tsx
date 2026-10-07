@@ -10,7 +10,7 @@ export function TabBar({ active, onChange }: { active: TabKey; onChange: (k: Tab
           type="button"
           onClick={() => onChange(t.key)}
           className={`flex flex-1 flex-col items-center gap-0.5 py-2 text-xs ${
-            active === t.key ? 'text-emerald-600 font-semibold' : 'text-gray-500'
+            active === t.key ? 'text-emerald-700 font-semibold' : 'text-gray-500'
           }`}
         >
           <span className="text-lg leading-none">{t.icon}</span>

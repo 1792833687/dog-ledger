@@ -80,8 +80,8 @@ export function BackupPanel() {
           e.target.value = ''
         }}
       />
-      {message && <p className="mt-2 text-xs text-emerald-600">{message}</p>}
-      <p className="mt-2 text-xs text-gray-400">
+      {message && <p className="mt-2 text-xs text-emerald-700">{message}</p>}
+      <p className="mt-2 text-xs text-gray-500">
         恢复前会先问一次。导出后请马上把文件发到微信「文件传输助手」或存进电脑。
       </p>
 
