@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <!-- emerald-700：跟应用里所有主色一致（原来写的是 emerald-600，比界面里深一档都不对） -->
+    <meta name="theme-color" content="#047857" />
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="./icon-192.png" />
+
+    <!-- 分享时的样子。以前什么标签都没有，微信里发出去就是一条光秃秃的蓝链接。 -->
+    <meta
+      name="description"
+      content="犬只买卖的记账台账：预估保本价、记每批成本与流水、盯检疫与预定单，数据只存在自己手机上。"
+    />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="狗账" />
+    <meta
+      property="og:description"
+      content="犬只买卖的记账台账：预估保本价、记每批成本与流水、盯检疫与预定单，数据只存在自己手机上。"
+    />
+    <!-- 这里必须是**绝对** URL：抓取器（微信、微博、Twitter 卡）不会拿相对路径去拼域名，
+         给相对路径等于没给图。域名写死是刻意的 —— 仓库里 README / DEPLOY.md 也写着同一个线上地址，
+         换域名时三处一起改。站点本身仍然用 base: './' 的相对路径，不受影响。 -->
+    <meta property="og:url" content="https://1792833687.github.io/dog-ledger/" />
+    <meta property="og:image" content="https://1792833687.github.io/dog-ledger/icon-512.png" />
+    <meta property="og:image:width" content="512" />
+    <meta property="og:image:height" content="512" />
+    <meta property="og:locale" content="zh_CN" />
+    <meta name="twitter:card" content="summary" />
+    <meta name="twitter:title" content="狗账" />
+    <meta
+      name="twitter:description"
+      content="犬只买卖的记账台账：预估保本价、记每批成本与流水、盯检疫与预定单，数据只存在自己手机上。"
+    />
+    <meta name="twitter:image" content="https://1792833687.github.io/dog-ledger/icon-512.png" />
+
+    <title>狗账</title>
+    <script type="module" crossorigin src="./assets/index-D7CBQ2Xa.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/index-MKn8FMum.css">
+  </head>
+  <body>
+    <div id="root"></div>
+  </body>
+</html>
