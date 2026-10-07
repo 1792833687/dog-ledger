@@ -96,7 +96,14 @@ export function BackupPanel() {
           onClick={() => {
             const restored = pendingRestore
             if (!restored) return
-            replaceAll(restored)
+            // 恢复完这一下，「这台设备上的数据有备份」就是事实：用户手里正拿着那个文件。
+            // 不写这一笔的话，恢复当天面板上会写「从未备份过」、黄色横幅还会催他再备份一次 ——
+            // 在他刚刚用备份把自己救回来的时候说这句假话，是最容易让人不再相信这条提醒的时机。
+            // （`lastBackupAt` 是完整 ISO 时间戳，用 `toISOString()` 是对的，见 `handleExport` 的说明。）
+            replaceAll({
+              ...restored,
+              settings: { ...restored.settings, lastBackupAt: new Date().toISOString() },
+            })
             setPendingRestore(null)
             setMessage(`恢复成功，共 ${restored.entries.length} 条流水。`)
           }}
