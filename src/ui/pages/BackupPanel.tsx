@@ -1,6 +1,8 @@
 import { useRef, useState } from 'react'
 import { useAppData } from '../../state/useAppData'
 import { exportBackup, importBackup } from '../../storage/backup'
+import { DEFAULT_DATA } from '../../domain/types'
+import { canClearData, clearPhrase } from '../backupDanger'
 import { daysSinceBackup } from '../backupStatus'
 import { Modal } from '../components/Modal'
 import { todayLocalIso } from '../planForm'
@@ -11,6 +13,10 @@ export function BackupPanel() {
   const fileInput = useRef<HTMLInputElement>(null)
   const [message, setMessage] = useState('')
   const [pendingRestore, setPendingRestore] = useState<AppData | null>(null)
+  // 清空弹窗的输入。关掉就清空 —— 留着的话下次打开是「清空」两个字已经打好了、
+  // 确认键已经亮着，那这道门槛就等于没有（与任务 21b 的「草稿不跨卡片残留」同一个道理）。
+  const [clearOpen, setClearOpen] = useState(false)
+  const [clearInput, setClearInput] = useState('')
 
   // 渲染时就要用 now。不能在渲染体里调 new Date()（react(purity)），
   // useMemo / useEffect 也都被拦——只有 useState 惰性初始化能过门禁（见 Global Constraints）。
@@ -43,6 +49,11 @@ export function BackupPanel() {
     } catch (e) {
       setMessage(e instanceof Error ? e.message : '恢复失败')
     }
+  }
+
+  function closeClear() {
+    setClearOpen(false)
+    setClearInput('')
   }
 
   return (
@@ -84,6 +95,13 @@ export function BackupPanel() {
         }}
       />
       {message && <p className="mt-2 text-xs text-emerald-700">{message}</p>}
+      {/* 导出之前先说清楚它是什么：用户把 JSON 发到群里的时候，
+          里面躺着的是卖家的姓名、电话和检疫证明编号。这事只有他自己能判断，
+          我们能做的是别让他在不知情的情况下发出去。 */}
+      <p className="mt-2 text-xs text-red-700">
+        备份文件是<b>明文</b>的，里面有你记的卖家姓名、联系方式、检疫证明编号
+        —— 发出去之前想清楚发给谁，别发到群里或公开的地方。
+      </p>
       {/* 只在「问过、答案是不持久」且**真记了东西**时提醒：空账本被系统清掉也无所谓，
           而 persisted 为 null（没问出来）时更不能当成坏消息吓人。
           这里刻意用琥珀小字，不用红色警告条 —— 红条是「已经存不进去了」（SaveFailedBanner），
@@ -96,6 +114,22 @@ export function BackupPanel() {
       <p className="mt-2 text-xs text-gray-500">
         恢复前会先问一次。导出后请马上把文件发到微信「文件传输助手」或存进电脑。
       </p>
+
+      {/* 清空入口。刻意与上面两个按钮隔开一段、只用红字描边：
+          它不是日常动线里的一步，是「这台设备要还人 / 要重来」时才会找的东西。
+          以前这个动作只能靠用户自己去清浏览器数据，那个办法既不精确也教不会。 */}
+      <div className="mt-4 border-t border-gray-100 pt-3">
+        <button
+          type="button"
+          className="w-full rounded-xl border border-red-600 py-2.5 text-xs font-semibold text-red-700"
+          onClick={() => {
+            setClearInput('')
+            setClearOpen(true)
+          }}
+        >
+          清空全部数据
+        </button>
+      </div>
 
       <Modal open={pendingRestore !== null} title="恢复备份？" onClose={() => setPendingRestore(null)}>
         <p className="text-sm text-gray-600">
@@ -126,6 +160,45 @@ export function BackupPanel() {
           type="button"
           className="mt-2 w-full rounded-xl border border-gray-300 py-3 text-sm font-semibold text-gray-700"
           onClick={() => setPendingRestore(null)}
+        >
+          取消
+        </button>
+      </Modal>
+
+      <Modal open={clearOpen} title="清空全部数据？" onClose={closeClear}>
+        <p className="text-sm text-gray-600">
+          这台设备上的全部批次、狗、流水、预定单都会被删掉，<b>没有撤销</b>。要留就先导出备份。
+        </p>
+        <p className="mt-3 text-xs text-gray-500">
+          确认请在下面打出「{clearPhrase()}」两个字。
+        </p>
+        <input
+          autoFocus
+          aria-label={`打出「${clearPhrase()}」两个字以确认清空`}
+          className="mt-2 w-full rounded-lg bg-gray-100 px-3 py-2 text-sm outline-none placeholder:text-gray-600"
+          placeholder={clearPhrase()}
+          value={clearInput}
+          onChange={e => setClearInput(e.target.value)}
+        />
+        <button
+          type="button"
+          className="mt-3 w-full rounded-xl bg-red-600 py-3 text-sm font-semibold text-white disabled:opacity-40"
+          disabled={!canClearData(clearInput)}
+          onClick={() => {
+            // 与「从备份恢复」走同一条路：整个对象覆盖着写回库。用克隆出来的默认数据，
+            // 而不是把现有对象里的数组清空 —— 后者会留着用户自己加过的成本项、
+            // 合伙人名字这些东西，那叫「清账」不叫「清空全部数据」，名不副实。
+            replaceAll(structuredClone(DEFAULT_DATA))
+            closeClear()
+            setMessage('已清空。这台设备上现在是一本空账。')
+          }}
+        >
+          清空
+        </button>
+        <button
+          type="button"
+          className="mt-2 w-full rounded-xl border border-gray-300 py-3 text-sm font-semibold text-gray-700"
+          onClick={closeClear}
         >
           取消
         </button>
