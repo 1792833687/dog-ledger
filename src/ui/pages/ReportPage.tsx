@@ -146,7 +146,7 @@ export function ReportPage() {
 
       <h2 className="mt-6 text-sm font-semibold text-gray-700">分账</h2>
       {s.partners.length === 0 ? (
-        <p className="mt-2 rounded-xl bg-amber-50 p-3 text-xs text-amber-700">还没有合伙人，先去「设置」页把人加上。</p>
+        <p className="mt-2 rounded-xl bg-amber-50 p-3 text-xs text-amber-700">还没有合伙人。往下滚到本页底部的「财务设置」把人加上。</p>
       ) : (
         <div className="mt-2 overflow-hidden rounded-xl bg-white shadow-sm">
           <table className="w-full text-sm">

@@ -21,10 +21,13 @@
       property="og:description"
       content="犬只买卖的记账台账：预估保本价、记每批成本与流水、盯检疫与预定单，数据只存在自己手机上。"
     />
-    <!-- 相对路径：站点部署在子目录（base: './'），绝对路径写不出来。
-         另外抓取器普遍要求 og:image 是绝对 URL，这里给的是相对的，
-         所以某些平台可能拿不到图 —— 已知限制，见报告。 -->
-    <meta property="og:image" content="./icon-512.png" />
+    <!-- 这里必须是**绝对** URL：抓取器（微信、微博、Twitter 卡）不会拿相对路径去拼域名，
+         给相对路径等于没给图。域名写死是刻意的 —— 仓库里 README / DEPLOY.md 也写着同一个线上地址，
+         换域名时三处一起改。站点本身仍然用 base: './' 的相对路径，不受影响。 -->
+    <meta property="og:url" content="https://1792833687.github.io/dog-ledger/" />
+    <meta property="og:image" content="https://1792833687.github.io/dog-ledger/icon-512.png" />
+    <meta property="og:image:width" content="512" />
+    <meta property="og:image:height" content="512" />
     <meta property="og:locale" content="zh_CN" />
     <meta name="twitter:card" content="summary" />
     <meta name="twitter:title" content="狗账" />
@@ -32,7 +35,7 @@
       name="twitter:description"
       content="犬只买卖的记账台账：预估保本价、记每批成本与流水、盯检疫与预定单，数据只存在自己手机上。"
     />
-    <meta name="twitter:image" content="./icon-512.png" />
+    <meta name="twitter:image" content="https://1792833687.github.io/dog-ledger/icon-512.png" />
 
     <title>狗账</title>
   </head>
