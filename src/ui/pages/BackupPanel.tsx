@@ -69,9 +69,12 @@ export function BackupPanel() {
           从备份恢复
         </button>
       </div>
+      {/* 这个文件框是隐藏的（点上面那个按钮代它触发），但读屏器仍然会念到它，
+          所以给个名字，别念成一串「文件选择」。 */}
       <input
         ref={fileInput}
         type="file"
+        aria-label="选一个备份文件恢复"
         accept="application/json,.json"
         className="hidden"
         onChange={e => {

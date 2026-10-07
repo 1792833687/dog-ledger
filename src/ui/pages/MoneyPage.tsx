@@ -131,6 +131,10 @@ export function MoneyPage() {
 
   return (
     <div className="px-4 pb-6 pt-6">
+      {/* 这一页以前一个标题都没有：读屏器用户从底栏切过来，听到的第一个东西是「池子里的
+          现金 12,340」，没有任何「这是哪一页」的交代。视觉上有底栏高亮就够，语义上不够，
+          所以补一个只看得到标题的打屏版本（页面上那块黑底大字是展示，不是标题）。 */}
+      <h1 className="sr-only">钱的流水</h1>
       <div className="rounded-xl bg-gray-900 p-5 text-white shadow-sm">
         <div className="text-xs opacity-70">池子里的现金</div>
         <div className="mt-1 text-3xl font-bold">{formatMoney(pool)}</div>
@@ -201,6 +205,7 @@ export function MoneyPage() {
               <div className="flex shrink-0 gap-1">
                 <button
                   type="button"
+                  aria-label={`改这一笔：${entryLabel(data.settings.costItems, e.type, e.category)} ${formatMoney(e.amount)}`}
                   className="rounded-lg bg-gray-100 px-2 py-1 text-xs font-semibold text-gray-600"
                   onClick={() => openEdit(e)}
                 >
@@ -208,6 +213,7 @@ export function MoneyPage() {
                 </button>
                 <button
                   type="button"
+                  aria-label={`删这一笔：${entryLabel(data.settings.costItems, e.type, e.category)} ${formatMoney(e.amount)}`}
                   className="rounded-lg bg-gray-100 px-2 py-1 text-xs font-semibold text-red-700"
                   onClick={() => setDeletingId(e.id)}
                 >
@@ -242,6 +248,7 @@ export function MoneyPage() {
       >
         <input
           autoFocus
+          aria-label="金额（元）"
           className="w-full rounded-lg bg-gray-100 px-3 py-2 text-lg outline-none placeholder:text-gray-600"
           inputMode="decimal"
           placeholder="金额（元）"
@@ -265,6 +272,7 @@ export function MoneyPage() {
         {dialog === 'expense' && (
           <>
             <select
+              aria-label="支出类别"
               className="mt-2 w-full rounded-lg bg-gray-100 px-3 py-2 text-sm"
               value={category}
               onChange={e => setCategory(e.target.value)}
@@ -272,6 +280,7 @@ export function MoneyPage() {
               {data.settings.costItems.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
             </select>
             <select
+              aria-label="这笔钱从哪出"
               className="mt-2 w-full rounded-lg bg-gray-100 px-3 py-2 text-sm"
               value={paidBy}
               onChange={e => setPaidBy(e.target.value)}
@@ -286,6 +295,7 @@ export function MoneyPage() {
 
         {dialog !== null && needsPartner(dialog) && (
           <select
+            aria-label="记在谁名下"
             className="mt-2 w-full rounded-lg bg-gray-100 px-3 py-2 text-sm"
             value={partnerId}
             onChange={e => setPartnerId(e.target.value)}
@@ -295,6 +305,7 @@ export function MoneyPage() {
         )}
 
         <input
+          aria-label="备注"
           className="mt-2 w-full rounded-lg bg-gray-100 px-3 py-2 text-sm outline-none placeholder:text-gray-600"
           placeholder="备注（可留空）"
           value={note}
@@ -326,6 +337,7 @@ export function MoneyPage() {
           <>
             <input
               autoFocus
+              aria-label="金额（元）"
               className="w-full rounded-lg bg-gray-100 px-3 py-2 text-lg outline-none placeholder:text-gray-600"
               inputMode="decimal"
               placeholder="金额（元）"
@@ -339,6 +351,7 @@ export function MoneyPage() {
 
             <input
               type="date"
+              aria-label="日期"
               className="mt-2 w-full rounded-lg bg-gray-100 px-3 py-2 text-sm outline-none"
               value={edit.draft.date}
               onChange={e => patchDraft({ date: e.target.value })}
@@ -346,6 +359,7 @@ export function MoneyPage() {
 
             {editing.type === 'expense' && (
               <select
+                aria-label="支出类别"
                 className="mt-2 w-full rounded-lg bg-gray-100 px-3 py-2 text-sm"
                 value={edit.draft.category}
                 onChange={e => patchDraft({ category: e.target.value })}
@@ -356,6 +370,7 @@ export function MoneyPage() {
 
             {(editing.type === 'expense' || editing.type === 'injection') && (
               <select
+                aria-label={editing.type === 'expense' ? '这笔钱从哪出' : '谁注入的'}
                 className="mt-2 w-full rounded-lg bg-gray-100 px-3 py-2 text-sm"
                 value={edit.draft.paidBy}
                 onChange={e => patchDraft({ paidBy: e.target.value })}
@@ -370,6 +385,7 @@ export function MoneyPage() {
             )}
 
             <input
+              aria-label="备注"
               className="mt-2 w-full rounded-lg bg-gray-100 px-3 py-2 text-sm outline-none placeholder:text-gray-600"
               placeholder="备注（可留空）"
               value={edit.draft.note}

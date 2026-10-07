@@ -94,11 +94,13 @@ export function SettingsPanel() {
             <div key={p.id}>
               <div className="flex items-center gap-2">
                 <input
+                  aria-label="合伙人名字"
                   className="flex-1 rounded-md bg-gray-100 px-2 py-1.5 text-sm outline-none"
                   value={nameDrafts[p.id] ?? p.name}
                   onChange={e => writeName(p.id, e.target.value)}
                 />
                 <input
+                  aria-label={`${p.name} 的分成比例（%）`}
                   className="w-20 rounded-md bg-gray-100 px-2 py-1.5 text-right text-sm outline-none"
                   inputMode="decimal"
                   value={ratioDrafts[p.id] ?? formatPercent(p.shareRatio)}
@@ -252,12 +254,14 @@ export function SettingsPanel() {
       </ul>
       <div className="mt-2 flex flex-wrap items-center gap-2">
         <input
+          aria-label="新增成本项的名称"
           className="min-w-0 grow basis-full rounded-md bg-gray-100 px-2 py-1.5 text-sm outline-none placeholder:text-gray-600 sm:basis-0"
           placeholder="新增成本项，如 狗粮"
           value={newItemName}
           onChange={e => setNewItemName(e.target.value)}
         />
         <select
+          aria-label="新增成本项算在整批还是单只"
           className="rounded-md bg-gray-100 px-2 py-1.5 text-sm"
           value={newItemScope}
           onChange={e => setNewItemScope(e.target.value === 'batch' ? 'batch' : 'dog')}

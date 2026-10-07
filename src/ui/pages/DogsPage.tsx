@@ -331,6 +331,7 @@ export function DogsPage() {
 
         <div className="mt-4 flex gap-2">
           <input
+            aria-label="新批次名称"
             className="flex-1 rounded-lg bg-white px-3 py-2 text-sm shadow-sm outline-none placeholder:text-gray-500"
             placeholder="新批次名称，如 10月3日李村"
             value={newBatchName}
@@ -396,6 +397,7 @@ export function DogsPage() {
                   <div className="mt-2 space-y-2">
                     {preOrderNoteOnly ? (
                       <input
+                        aria-label="备注"
                         className={PRE_ORDER_FORM_INPUT}
                         placeholder="备注（可留空）"
                         value={preOrderDraft.note}
@@ -404,18 +406,21 @@ export function DogsPage() {
                     ) : (
                       <>
                         <input
+                          aria-label="卖家（谁家的狗）"
                           className={PRE_ORDER_FORM_INPUT}
                           placeholder="卖家（谁家的狗）"
                           value={preOrderDraft.sellerName}
                           onChange={e => patchPreOrderDraft({ sellerName: e.target.value })}
                         />
                         <input
+                          aria-label="联系方式"
                           className={PRE_ORDER_FORM_INPUT}
                           placeholder="联系方式（电话 / 微信，可留空）"
                           value={preOrderDraft.sellerContact}
                           onChange={e => patchPreOrderDraft({ sellerContact: e.target.value })}
                         />
                         <input
+                          aria-label="约几只"
                           className={PRE_ORDER_FORM_INPUT}
                           inputMode="numeric"
                           placeholder="约几只"
@@ -423,18 +428,21 @@ export function DogsPage() {
                           onChange={e => patchPreOrderDraft({ expectedCount: e.target.value })}
                         />
                         <input
+                          aria-label="约好哪天去收"
                           className={PRE_ORDER_FORM_INPUT}
                           type="date"
                           value={preOrderDraft.collectDate}
                           onChange={e => patchPreOrderDraft({ collectDate: e.target.value })}
                         />
                         <input
+                          aria-label="特征"
                           className={PRE_ORDER_FORM_INPUT}
                           placeholder="特征（几个黄的、大概多大，可留空）"
                           value={preOrderDraft.traits}
                           onChange={e => patchPreOrderDraft({ traits: e.target.value })}
                         />
                         <input
+                          aria-label="备注"
                           className={PRE_ORDER_FORM_INPUT}
                           placeholder="备注（可留空）"
                           value={preOrderDraft.note}
@@ -499,6 +507,7 @@ export function DogsPage() {
                         <div className="mt-2 flex gap-2">
                           <button
                             type="button"
+                            aria-label={`收货：${order.sellerName} 约的 ${order.expectedCount} 只`}
                             // 过了日子的那张，「收货」用绿色主色顶出来：今天最该点的就是它。
                             className={`flex-1 rounded-lg py-2 text-xs font-semibold text-white ${
                               stage === 'overdue' ? 'bg-emerald-700' : 'bg-gray-900'
@@ -509,6 +518,7 @@ export function DogsPage() {
                           </button>
                           <button
                             type="button"
+                            aria-label={`改这张预定单：${order.sellerName}`}
                             className="rounded-lg bg-gray-100 px-3 py-2 text-xs font-semibold text-gray-700"
                             onClick={() => openEditPreOrder(order)}
                           >
@@ -516,6 +526,7 @@ export function DogsPage() {
                           </button>
                           <button
                             type="button"
+                            aria-label={`把「${order.sellerName}」这张预定单记成黄了`}
                             className="rounded-lg bg-gray-100 px-3 py-2 text-xs font-semibold text-gray-700"
                             onClick={() => openCancelPreOrder(order.id)}
                           >
@@ -532,6 +543,7 @@ export function DogsPage() {
                         <div className="mt-1 flex justify-end">
                           <button
                             type="button"
+                            aria-label={`删掉「${order.sellerName}」这张预定单`}
                             className="rounded-lg bg-gray-100 px-3 py-1.5 text-xs font-semibold text-red-700"
                             onClick={() => openDeletePreOrder(order.id)}
                           >
@@ -558,6 +570,7 @@ export function DogsPage() {
                           )}
                           <button
                             type="button"
+                            aria-label={`改「${order.sellerName}」这张已收货预定单的备注`}
                             className="rounded-lg bg-gray-100 px-2 py-1 text-xs font-semibold text-gray-700"
                             onClick={() => openEditPreOrder(order)}
                           >
@@ -570,6 +583,7 @@ export function DogsPage() {
                         <div className="mt-2 flex justify-end">
                           <button
                             type="button"
+                            aria-label={`删掉「${order.sellerName}」这张黄了的预定单`}
                             className="rounded-lg bg-gray-100 px-3 py-1.5 text-xs font-semibold text-red-700"
                             onClick={() => openDeletePreOrder(order.id)}
                           >
@@ -592,6 +606,7 @@ export function DogsPage() {
               <li key={b.id}>
                 <button
                   type="button"
+                  aria-label={`打开批次「${b.name}」`}
                   onClick={() => {
                     // 打开一个批次时把上一个批次的草稿丢掉：草稿只属于它所属的那个批次，
                     // 漏下来就会变成「新批次一进来就在编辑态、还带着别人的红字」
@@ -628,6 +643,7 @@ export function DogsPage() {
         <Modal open={receivingId !== null} title="收货" onClose={closePreOrderPanels}>
           <input
             autoFocus
+            aria-label="实收只数"
             className="w-full rounded-lg bg-gray-100 px-3 py-2 text-lg outline-none placeholder:text-gray-600"
             inputMode="numeric"
             placeholder="实收只数"
@@ -638,6 +654,7 @@ export function DogsPage() {
             <p className="mt-1 text-xs text-red-700">只数得是整数，而且至少 1 只（狗只有整只）</p>
           )}
           <input
+            aria-label="每只收购价（元，空着按 0 算）"
             className="mt-2 w-full rounded-lg bg-gray-100 px-3 py-2 text-sm outline-none placeholder:text-gray-600"
             inputMode="decimal"
             placeholder="每只收购价（元，空着按 0 算）"
@@ -663,6 +680,7 @@ export function DogsPage() {
         <Modal open={cancelingId !== null} title="这张预定单黄了？" onClose={closePreOrderPanels}>
           <input
             autoFocus
+            aria-label="为什么黄了（可留空）"
             className="w-full rounded-lg bg-gray-100 px-3 py-2 text-sm outline-none placeholder:text-gray-600"
             placeholder="不写原因也行，以后自己看得懂就行"
             value={cancelReason}
@@ -817,6 +835,7 @@ export function DogsPage() {
         ) : (
           <input
             autoFocus
+            aria-label="批次名称"
             className="w-full rounded-lg bg-gray-100 px-2 py-1 outline-none"
             value={batchNameDraft}
             onChange={e => setBatchNameDraft(e.target.value)}
@@ -835,6 +854,7 @@ export function DogsPage() {
             选项里带上「未定」；`channelOptions` 会把旧备份里认不出的渠道补在最后，
             免得下拉框静默显示第一条、用户一碰就把原值改掉。 */}
         <select
+          aria-label="这一批打算走哪条路"
           className="rounded-lg bg-white px-2 py-1 text-xs text-gray-700 shadow-sm"
           value={batch.plannedChannel}
           onChange={e => {
@@ -913,9 +933,12 @@ export function DogsPage() {
                 )}
               </div>
               <div className="mt-2 flex flex-wrap gap-2 text-xs">
+                {/* 同一批里每只狗都有一排一模一样的按钮，读屏器念到第三个「卖出」
+                    时没人知道是哪一只 —— 所以每颗按钮自己带上狗号。 */}
                 {onHand && (
                   <button
                     type="button"
+                    aria-label={`卖出 ${d.code}`}
                     className="rounded-md bg-emerald-700 px-3 py-1 text-white"
                     onClick={() => { setSellingDogId(d.id); setPriceInput('') }}
                   >
@@ -929,6 +952,7 @@ export function DogsPage() {
                 {onHand && (
                   <button
                     type="button"
+                    aria-label={`记 ${d.code} 死亡`}
                     className="rounded-md bg-gray-100 px-3 py-1 text-gray-600"
                     onClick={() => void update(x => markDogDead(x, d.id))}
                   >
@@ -938,6 +962,7 @@ export function DogsPage() {
                 {d.status === 'sold' && !refunded && (
                   <button
                     type="button"
+                    aria-label={`${d.code} 退狗：狗回到在库`}
                     className="rounded-md bg-gray-100 px-3 py-1 text-gray-600"
                     onClick={() => {
                       setRefundingDogId(d.id); setRefundAmount(''); setRefundNote(''); setRefundKeepSold(false)
@@ -949,6 +974,7 @@ export function DogsPage() {
                 {d.status === 'sold' && !refunded && (
                   <button
                     type="button"
+                    aria-label={`${d.code} 退款：钱退了，狗没回来`}
                     className="rounded-md bg-gray-100 px-3 py-1 text-gray-600"
                     onClick={() => {
                       setRefundingDogId(d.id); setRefundAmount(''); setRefundNote(''); setRefundKeepSold(true)
@@ -965,6 +991,7 @@ export function DogsPage() {
                 {d.status === 'dead' && (
                   <button
                     type="button"
+                    aria-label={`把 ${d.code} 改回在库`}
                     className="rounded-md bg-amber-100 px-3 py-1 text-amber-700"
                     onClick={() => void update(x => setDogStatus(x, d.id, 'in_stock'))}
                   >
@@ -974,6 +1001,7 @@ export function DogsPage() {
                 {d.status === 'returned' && (
                   <button
                     type="button"
+                    aria-label={`${d.code} 狗又要回来了`}
                     className="rounded-md bg-amber-100 px-3 py-1 text-amber-700"
                     onClick={() => void update(x => setDogStatus(x, d.id, 'in_stock'))}
                   >
@@ -1126,6 +1154,7 @@ export function DogsPage() {
       >
         <input
           autoFocus
+          aria-label="售价（元）"
           className="w-full rounded-lg bg-gray-100 px-3 py-2 text-lg outline-none placeholder:text-gray-600"
           inputMode="decimal"
           placeholder="售价（元）"
@@ -1154,6 +1183,7 @@ export function DogsPage() {
       <Modal open={expenseOpen} title="记一笔批次支出" onClose={() => setExpenseOpen(false)}>
         <input
           autoFocus
+          aria-label="金额（元）"
           className="w-full rounded-lg bg-gray-100 px-3 py-2 text-lg outline-none placeholder:text-gray-600"
           inputMode="decimal"
           placeholder="金额（元）"
@@ -1165,6 +1195,7 @@ export function DogsPage() {
         )}
 
         <select
+          aria-label="这笔支出算什么"
           className="mt-2 w-full rounded-lg bg-gray-100 px-3 py-2 text-sm"
           value={expenseCategory}
           onChange={e => setExpenseCategory(e.target.value)}
@@ -1175,6 +1206,7 @@ export function DogsPage() {
         </select>
 
         <input
+          aria-label="备注"
           className="mt-2 w-full rounded-lg bg-gray-100 px-3 py-2 text-sm outline-none placeholder:text-gray-600"
           placeholder="备注（可留空）"
           value={expenseNote}
@@ -1217,6 +1249,7 @@ export function DogsPage() {
 
         <input
           autoFocus
+          aria-label="退回给客户的钱（元）"
           className="w-full rounded-lg bg-gray-100 px-3 py-2 text-lg outline-none placeholder:text-gray-600"
           inputMode="decimal"
           placeholder="退回给客户的钱（元）"
@@ -1229,6 +1262,7 @@ export function DogsPage() {
 
         {refundKeepSold && (
           <input
+            aria-label="备注"
             className="mt-2 w-full rounded-lg bg-gray-100 px-3 py-2 text-sm outline-none placeholder:text-gray-600"
             placeholder="备注（可留空）"
             value={refundNote}

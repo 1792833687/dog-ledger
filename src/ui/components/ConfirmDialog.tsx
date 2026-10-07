@@ -26,6 +26,8 @@ export function ConfirmDialog({
       <div className="mt-4 flex gap-2">
         <button
           type="button"
+          // 默认焦点落在「算了」上：这是个会丢东西的确认框，回车键不该正好按在红键上。
+          autoFocus
           className="flex-1 rounded-xl bg-gray-100 py-3 text-sm font-semibold text-gray-700"
           onClick={onClose}
         >
