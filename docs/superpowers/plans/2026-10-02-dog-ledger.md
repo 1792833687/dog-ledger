@@ -5394,6 +5394,129 @@ export function setBatchChannel(data: AppData, batchId: string, channel: Channel
 
 ---
 
+### Task 31–36：修订四（第三方审计修复）
+
+> **这一组的由来。** 用户拿线上站点做了一轮第三方审计：性能 100、最佳实践 100、无障碍 92、SEO 90，整体约 7/10，「已经能试用，但离放心用于真实账目还有明显距离」，用户原话是「**帮我修复**」。审计自己排的优先顺序是：①颜色对比度不达标（计算页 19 处、报表页 13 处低于 WCAG AA）②PWA 只是「看起来能安装」（没有 service worker，断网打不开）③存储失败不被界面看见（IndexedDB 写失败只 `console.warn`，界面仍像保存成功）④320px 横向溢出 + 桌面端底栏横跨 1440px ⑤弹窗与表单无障碍不完整。其余是文案、元信息、备份敏感数据与图标。
+>
+> **顺序（任务编号是身份，不是执行顺序）**：`31 → 33 → 35`（第一批，全在界面层）→ `32 → 34 → 36`（第二批：离线与存储可见性、无障碍、备份安全）。
+>
+> **这一组的红线（每个任务都适用）**：**不许改数据形状**（`AppData` / `Settings` / `PreOrder` / `LedgerEntry` 一个字段都不许动）、**不许改任何域层算法**（`src/domain/**` 除注释外不动）、不许新增运行时依赖、不许 `as any` / `as unknown as` / `@ts-expect-error` / `@ts-ignore` / 非空断言、`git add` 只用显式路径。用户**真实的账目**就在线上站点里，所以任何一步都要保证「老数据照常打开、老备份照常恢复」。
+>
+> **验收口径**：三条门禁（`npx vitest run` / `npm run build` / `npx oxlint --format=default`）+ `git status --short` 干净 + 控制器 CDP 走查（本组新增「对比度与布局」「离线」「无障碍」三组断言）。**不接受「看着好一点」这种结论**：每一条都要有可复算的数（对比度比值、`scrollWidth`、可访问名、`aria-*` 是否存在）。
+
+---
+
+### Task 31: 颜色对比度达标（WCAG AA 4.5:1）
+
+**Goal:** 把界面上所有小字正文、说明文字、表头、绿色金额与绿色按钮的对比度提到 WCAG AA（普通正文 ≥ 4.5:1），并且**用一条测试守住**，防止以后又滑回去。
+
+**Files:**
+- Modify: `src/ui/**/*.tsx`（全部页面与组件，按下面映射逐处改）
+- Create: `src/ui/contrast.test.ts`（源码守卫 + 比值断言）
+- Modify: `src/App.tsx`（`正在载入…` 那行的 `text-gray-400`）
+
+**必须满足的行为**
+- **映射表（逐字照做，不许自由发挥）**：
+  | 现在 | 改成 | 理由 |
+  |---|---|---|
+  | `text-gray-400` | `text-gray-500` | 白底 2.6:1 → 4.83:1 |
+  | `text-gray-400`（位于 `bg-gray-100` / `bg-gray-200` 容器内） | `text-gray-600` | 灰底上 `gray-500` 只有约 4.4:1 |
+  | `text-gray-300` | `text-gray-500` | 同上 |
+  | `text-emerald-600` | `text-emerald-700` | 白底 3.75:1 → 约 4.9:1 |
+  | `bg-emerald-600`（配白字） | `bg-emerald-700` | 白字 3.69:1 → 约 4.9:1 |
+  | `text-red-500` | `text-red-700` | 白底 3.76:1 → 约 6.4:1 |
+  | `bg-red-600`（配白字） | **保留** | 白字约 4.8:1，已达标 |
+  | `text-amber-600` | `text-amber-700` | 白底约 3.3:1 → 约 4.8:1 |
+  | `bg-amber-50` / `text-amber-700` | **保留** | 已达标 |
+  | `bg-gray-900` + `text-white` | **保留** | 约 17:1 |
+- 所有 `<input>` / `<textarea>` 显式加 `placeholder:text-gray-500`（`bg-gray-100` 底上约 4.4:1，配合 Task 34 补的可访问名一起达标）；**不许只把字号调大就算解决**——审计点名的是颜色。
+- **`text-[10px]` 这类极小字同样按映射表改颜色**（渠道对照表里那两列说明文字是重灾区）。
+- 逐个页面自查一遍「白底上的灰字、绿字、红字、琥珀字」都符合上表；`src/ui/**` 里**不许再出现** `text-gray-400`、`text-gray-300`、`text-emerald-600`、`bg-emerald-600`、`text-red-500`、`text-amber-600`（`text-emerald-600` 若确实要用于**装饰性**图形再加例外，且必须在报告里说明）。
+
+**测试要求**（`src/ui/contrast.test.ts`，node 环境，用 `node:fs` 读源码——不引新依赖）
+- 写一个 `relativeLuminance(hex)` / `contrastRatio(a, b)` 的纯实现（WCAG 2.1 公式），先用几组已知值钉住它（`#000` vs `#fff` = 21、`#777` vs `#fff` ≈ 4.48、`#9ca3af` vs `#fff` ≈ 2.54）。
+- 断言本次选定的调色板全部达标：`text-gray-500` 对 `#ffffff` 与 `#f9fafb`（`bg-gray-50`）、`text-gray-600` 对 `#f3f4f6`（`bg-gray-100`）、`text-emerald-700` 对 `#ffffff`、`#ffffff` 对 `#047857`（`bg-emerald-700`）、`text-red-700` 对 `#ffffff`、`#ffffff` 对 `#dc2626`（`bg-red-600`）、`text-amber-700` 对 `#ffffff` 全部 ≥ 4.5。
+- **源码守卫**：递归读 `src/**/*.tsx`（排除 `*.test.tsx`）的文本，断言不含被禁 token（上表左列那六个）。失败信息要写成「哪个文件哪一行还在用 `text-gray-400`，应改成 `text-gray-500`」，让人一眼能改。
+- 这条测试**不需要 DOM**，纯文本 + 算术，跑得飞快。
+
+**Steps**
+- [ ] **Step 1**：先写 `src/ui/contrast.test.ts`（先把 `relativeLuminance` / `contrastRatio` 的已知值钉绿，源码守卫那两条**此时必须是红的**——源码里还有 46 处 `text-gray-400`）。
+- [ ] **Step 2**：按映射表改遍 `src/ui/**` 与 `src/App.tsx`，直到守卫变绿。
+- [ ] **Step 3**：`npx vitest run` / `npm run build` / `npx oxlint --format=default` / `git status --short`。
+- [ ] **Step 4**：提交：
+  ```bash
+  git add src/ui src/App.tsx
+  git commit -m "fix(a11y): 正文与按钮颜色提到 WCAG AA，并加一条源码守卫"
+  ```
+
+---
+
+### Task 33: 小屏与桌面布局收口
+
+**Goal:** 320px 宽不横向溢出；桌面端底栏不再横跨整个窗口、与内容脱节。
+
+**Files:**
+- Modify: `src/ui/pages/SettingsPanel.tsx`（成本项行是小屏溢出的源头）
+- Modify: `src/ui/TabBar.tsx`、`src/App.tsx`（底栏与内容同宽）
+- 其它 `src/ui/**` 里在 320px 下会溢出的行（按实测改，报告里列出改了哪几处）
+
+**必须满足的行为**
+- **320×568 不许出现横向滚动**：`document.documentElement.scrollWidth <= 320`（控制器探针会实测；现在是报表页设置区成本项行溢出约 25px）。
+- 小屏上**成本项那一行改成两行结构或 `flex-wrap`**（名称 + 金额输入 + 删除/操作按钮各自成组换行），**不许靠缩小字号或横向裁切蒙过去**。
+- 桌面端（≥1024px）：**底栏的内层容器与主内容同宽**（`mx-auto max-w-lg` 一类），不留一条横跨整个窗口的黑条；主内容仍保持手机宽度（本应用就是给手机用的，**不做多栏**）。底栏固定在底部这个行为保留。
+- 改完在 375px 与 320px 两档下，五个页面都能滚到底、按钮都点得到；`index.html` 的 viewport 不额外改。
+
+**Steps**
+- [ ] **Step 1**：先量：在 320px 下打开「报 → 财务设置」，记下 `document.documentElement.scrollWidth` 与溢出元素的 `getBoundingClientRect()`（写进报告，作为改动前的证据）。
+- [ ] **Step 2**：改布局。
+- [ ] **Step 3**：三条门禁 + `git status --short`。
+- [ ] **Step 4**：提交：
+  ```bash
+  git add src/ui src/App.tsx
+  git commit -m "fix(ui): 320px 不再横向溢出，桌面底栏与内容同宽"
+  ```
+
+---
+
+### Task 35: 分享元信息、空态与设置入口文案、底部图标
+
+**Goal:** 链接发到微信有摘要；两处指错路的文案改对；底部导航不再依赖 emoji（跨平台渲染不一致）。
+
+**Files:**
+- Modify: `index.html`（`description` / Open Graph / Twitter card）
+- Modify: `src/ui/pages/DogsPage.tsx`（批次空态文案）
+- Modify: `src/ui/pages/MoneyPage.tsx`（「先去设置页」那句话 → 能点的入口）
+- Modify: `src/ui/pages/ReportPage.tsx` / `src/ui/pages/SettingsPanel.tsx`（接住上面那个跳转）
+- Modify: `src/ui/TabBar.tsx`（emoji → 内联 SVG 线性图标）
+- Create: `src/ui/navigation.ts`（一个小小的跳转意图发信器）+ `src/ui/navigation.test.ts`
+- Modify: `src/ui/tabs.ts`（图标字段：把 emoji 换成图标名）
+
+**必须满足的行为**
+- **元信息**（`index.html`）：加 `description`（一句话说清是什么，含「批次 / 检疫 / 合伙分账」这些词）、`og:title` / `og:description` / `og:type=website` / `og:url=https://1792833687.github.io/dog-ledger/` / `og:image=./icon-512.png`（**就用现有图标，不新画图**，并在报告里写明「没有专门设计的分享图」这个已知限制）、`og:image:width/height=512`、`twitter:card=summary`。`theme-color` 从 `#059669`（emerald-600）改成 `#047857`（emerald-700），与 Task 31 的新按钮色一致。
+- **空态文案**（`DogsPage.tsx`）：现在写「还没有批次。去「算」标签页一键建一个。」——**这句话漏了真正的入口**。改成如实描述两条路：「还没有批次。去「算」页一键建一个；也可以在上面记一张预定单，收到狗时自动建批次。」
+- **设置入口**（`MoneyPage.tsx`）：那句「还没有合伙人……先去「设置」页把人加上」里的「设置」**不存在**（设置藏在「报」页底部的 `<details>` 里）。改成「**前往财务设置**」的按钮：点一下切到「报」页**并自动展开**那个设置 `<details>`。
+  - 实现方式：新建 `src/ui/navigation.ts`，导出 `requestSettings(): void` 与 `onSettingsRequest(cb: () => void): () => void`（模块级订阅表，纯函数、无 React、可单测：订阅/退订/多次订阅/退订后再发不影响别人）。
+  - `src/App.tsx` 订阅 → 收到就 `setTab('report')`；`SettingsPanel.tsx` 订阅 → 收到就 `setOpen(true)`（把那个 `<details>` 从非受控改成受控 `open`/`onToggle`，**默认仍收起**）。
+  - 灰字文案里**不许**再出现「设置页」这种不存在的页面名。
+- **底部图标**（`TabBar.tsx` + `tabs.ts`）：五个 emoji 换成**内联 SVG 线性图标**（`stroke="currentColor"`、`fill="none"`、`stroke-width="1.6"`、`aria-hidden="true"`、`className="h-5 w-5"`），标签文字保留；补 `hover:`、`aria-current="page"`（当前页）、`focus-visible:` 样式。**不引图标库依赖**（手写 5 个 16–24px 的 path）。图标要能一眼区分「算（计算器）/狗（爪印）/检（盾牌 + 勾）/钱（钱袋）/报（账单）」。
+  - `src/ui/tabs.ts` 里的 `icon` 字段从 emoji 字符串改成图标键（例如 `'calc' | 'paw' | 'shield' | 'wallet' | 'report'`），`TabBar` 用小映射表渲染对应 SVG。
+
+**测试要求**（`src/ui/navigation.test.ts`）
+- `onSettingsRequest` 的订阅/退订/多订阅/退订后其它人照常收到。
+- `src/ui/tabs.ts` 的 `icon` 值全部在允许集合里（防止再塞回一个 emoji）。
+
+**Steps**
+- [ ] **Step 1**：先写 `src/ui/navigation.test.ts`（红）。
+- [ ] **Step 2**：实现 `navigation.ts`，接线 `App.tsx` / `SettingsPanel.tsx` / `MoneyPage.tsx`；改 `DogsPage.tsx` 空态文案；换 `TabBar` 图标；改 `index.html` 元信息。
+- [ ] **Step 3**：三条门禁 + `git status --short`。
+- [ ] **Step 4**：提交：
+  ```bash
+  git add index.html src/ui
+  git commit -m "feat(ui): 分享元信息、设置入口可点、底部换成线性图标"
+  ```
+
+---
+
 ### Task 14: 备份安全网 + PWA + 上线
 
 > **状态（2026-10-03）**：本任务**已在第一版落地并上线**（GitHub Pages）。上面 Task 22–30 是修订三的实施任务，它们结束之后由 Task 30 负责重新构建与推送；本任务的步骤与验收标准保持原样，作为"如果将来要重做一遍"的参考与验收依据。
