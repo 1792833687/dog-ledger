@@ -5527,9 +5527,7 @@ export function setBatchChannel(data: AppData, batchId: string, channel: Channel
 
 ---
 
-**Task 31 / 33 / 35 实施记录（2026-10-03，实施者 `43e4ecdd`）+ 控制器自做的 Task 35b**
-
-> 三个提交：`cf4d311 fix(a11y): 正文与按钮颜色提到 WCAG AA，并加一条源码守卫`（11 files / +297 −121）→ `a92bd6e fix(ui): 320px 不再横向溢出，桌面底栏与内容同宽`（2 files / +20 −16）→ `f5840be feat(ui): 分享元信息、设置入口可点、底部换成线性图标`（11 files / +390 −21，含新建 `src/ui/navigation.ts` 62 行与 `src/ui/navigation.test.ts` 111 行）。控制器另做 `c3c3ff6 fix(ui): 分享图改成绝对 URL，报表页那句错指引改对`（2 files / +9 −6）。
+**Task 31 / 33 / 35 实施记录（2026-10-03，实施者 `43e4ecdd`）+ 控制器自做的 Task 35b**> 三个提交：`cf4d311 fix(a11y): 正文与按钮颜色提到 WCAG AA，并加一条源码守卫`（11 files / +297 −121）→ `a92bd6e fix(ui): 320px 不再横向溢出，桌面底栏与内容同宽`（2 files / +20 −16）→ `f5840be feat(ui): 分享元信息、设置入口可点、底部换成线性图标`（11 files / +390 −21，含新建 `src/ui/navigation.ts` 62 行与 `src/ui/navigation.test.ts` 111 行）。控制器另做 `c3c3ff6 fix(ui): 分享图改成绝对 URL，报表页那句错指引改对`（2 files / +9 −6）。
 >
 > **门禁（控制器独立复跑）**：测试 763 → 763 → **778**（30 files）；模块数 58 → 58 → **59**（`navigation.ts` 进 bundle）；`oxlint --format=default` 全程 0/0（76 → 78 files）；`tsc -b` exit 0；每个提交后工作树干净。
 >
@@ -5651,6 +5649,29 @@ export function setBatchChannel(data: AppData, batchId: string, channel: Channel
   git add src/ui docs/superpowers/specs/2026-10-02-dog-trading-ledger-design.md
   git commit -m "feat(ui): 备份提示敏感数据，加逐字确认的清空入口"
   ```
+
+---
+
+**Task 32 / 34 / 36 实施记录（2026-10-03，实施者 `43e4ecdd`）+ 控制器终验与两处修复**
+
+> **三个提交**：`4d3c83f feat: 离线可打开，存储失败不再悄悄吞掉`（11 files / +283 −11）→ `9dd8bda fix(a11y): 弹窗成为真对话框、输入框有可访问名、每页一个 h1`（8 files / +344 −4）→ `66f5be9 feat(ui): 备份提示敏感数据，加逐字确认的清空入口`（4 files / +146 −2，含设计书三处：§1.3 改成「不做**一键**清空」、§7 已知限制加「导出是明文 JSON，将来可做可选口令加密」、§6 手动验证清单里「清空没有界面按钮」改成「从修订四起有界面入口」）。
+>
+> **门禁（控制器独立复跑）**：`Test Files 32 passed (32)` / `Tests 803 passed (803)`；`✓ 62 modules transformed`（59 → 61 → 61 → 62：两个 banner + `backupDanger.ts` 各 +1，Task 34 只加 `.test.ts` 故 +0）；`npx oxlint --format=default` 0/0（84 files）；`tsc -b` exit 0；每个提交后 `git status --short` 空。
+>
+> **实施者自证**：`probes/dogledger-t32.mjs`（PORT 9360）`"failed": []`：`sw { ready: true, active: true, state: 'activated', controller: true }`、`cacheKeys: ['dog-ledger-v1']`、注入 `IDBObjectStore.prototype.put` 必失败后红条出现、点「去导出备份」后当前页从「算」变成「报」、断网 reload 后 `appAlive: true` + 灰字在 + 不是浏览器错误页、恢复网络后灰字消失、0 console error / 0 exception。
+> **实施者三条要裁定的判断**：①`sw.js` 两条按控制器的提交前复核意见改（前缀过滤 + `new URL().origin`）；②**任务书里「Task 31 漏下 8 个 placeholder 颜色」其实不漏** —— 那 8 个走两个共享常量（`src/ui/pages/DogsPage.tsx:67` 的 `PRE_ORDER_FORM_INPUT`、`src/ui/pages/QuarantinePage.tsx:31` 的 `ROW_INPUT`），Task 31 已覆盖，全仓 16 处 `placeholder:text-` 覆盖 22 个 placeholder；③设计书多改一处（不改自相矛盾）。**三条全部采纳。**
+> **其它已认可的判断**：`ConfirmDialog` 取消键加 `autoFocus`（回车不该正好落在红键上）；`Modal` 的 `onClose` 存 `onCloseRef`（否则每次渲染的新箭头函数会让「把焦点移进面板」的 effect 反复重跑、打字时焦点被抢）；焦点策略「面板里已有 `autoFocus` 输入框就不抢」；`a11y.test.ts` 按真实结构写 `DogsPage` 2 / `QuarantinePage` 2 / 其余 1 并注明互斥分支；清空弹窗输入框随关闭清空（否则门槛形同虚设）；三次 `git add` 都改成显式文件路径。
+>
+> **控制器终验（`C:\Users\17928\AppData\Local\Temp\dogledger-audit.mjs`，PORT 9363，对着最终构建）第一轮 46/49，三个 FAIL 全部定位：**
+> 1. **「检」页批次下拉没有可访问名**（`["select[select-one]"]`，改动前也有）→ 控制器给 `src/ui/pages/QuarantinePage.tsx` 的 `<select>` 加 `aria-label="选一个批次"`。
+> 2. **Esc 关掉「改这一笔」后焦点掉回 `body`** → 根因用「给 `HTMLElement.prototype.focus` 打桩 + 在两个 effect 与 cleanup 里埋标记」查出：`openerRef` 记的不是那个「改」按钮而是**面板里的输入框**（探针实测 `opener="INPUT/gone"`）—— 弹窗打开时 React 在**提交阶段**就把焦点给了 `autoFocus` 输入框，而记录用的 `focusin` 监听器要到被动阶段才被卸载，于是被面板内的焦点覆盖。修法：`focusin` 里只看**面板外面**的焦点（`event.target.closest('[role="dialog"]') === null`），并在归还焦点前加 `opener.isConnected` 守卫。**注意**：先试过「在渲染期写 ref」，被 `react(refs)` 门禁挡下（5 条 warning），所以最终用事件监听器。
+> 3. **「断网时数据仍然在」失败是控制器探针自己的错**：断网 reload 后应用停在默认的「算」页，探针没先切到「狗」页就断言批次卡可见 → 探针里补 `go('狗')`。同理 `dogledger-t27.mjs` 的 `poIssue()` 还在找 `text-red-500`，而 Task 31 已把所有红字改成 `text-red-700` → 改成按 `text-red-` 前缀匹配。
+>
+> **控制器两处修复**：`00bc92d fix(a11y): 关掉弹窗后焦点真的还给开启者，检页批次下拉补可访问名`（2 files / +32 −3）。
+>
+> **终验结果：审计探针 49/49、`dogledger-t27` 90/90、`dogledger-t29` 42/42、`dogledger-t30` 39/39 = 220/220，全部 0 条 `Runtime.exceptionThrown`、0 条 `console.error`。** 审计探针覆盖：五页 + 「报」页展开财务设置 + 批次详情展开补成本的**对比度**（判定 0 处低于 AA）、每页恰好一个 `<h1>`、所有控件有可访问名、流水行「改」「删」有 `aria-label`、弹窗 `role="dialog"`/`aria-modal`/`aria-labelledby`、焦点进面板、Esc 关闭、**焦点还给开启者**、320×568 五页 + 展开设置**都不横向溢出**、1440×900 底栏内层与 `main` 同宽、service worker 激活并接管、断网 reload 仍能渲染且显示离线提示、注入写失败后红色横幅出现且「去导出备份」能跳到「报」页、`description`/OG/`twitter:card` 都在。**改动前的基线（27 / 104 / 28 / 3 处低于 AA、320px 溢出、底栏内层 1425）全部归零或达标。**
+>
+> **重新上线**：`npm run build`（`dist/assets/index-D7CBQ2Xa.js` 329.27 kB / `index-MKn8FMum.css`）→ 后台脚本 `.superpowers/sdd/2026-10-02-dog-ledger/push.ps1`（推 `master` 与 `gh-pages`，各最多 40 次重试）→ 线上地址不变 **https://1792833687.github.io/dog-ledger/**。
 
 ---
 
