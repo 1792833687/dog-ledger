@@ -5449,6 +5449,16 @@ export function setBatchChannel(data: AppData, batchId: string, channel: Channel
   git commit -m "fix(a11y): 正文与按钮颜色提到 WCAG AA，并加一条源码守卫"
   ```
 
+> **控制器另有一条运行时探针，验收时两条都要过。** `C:\Users\17928\AppData\Local\Temp\dogledger-audit.mjs`（PORT 9363）在真实浏览器里按 WCAG 公式复算每页可见文字的对比度：取 `getComputedStyle` 的 `color` 与**最近的、alpha > 0.95 的祖先背景色**，`opacity < 1` 时先把前景与背景混合，小字阈值 4.5、大字 3，跳过 `.sr-only` / `[disabled]` / 零尺寸元素。
+>
+> **改动前的实测（对着线上旧版、390px 宽、渠道对照与财务设置都展开）：算页折叠 27 处、算页展开渠道对照 104 处、报页展开财务设置 28 处、批次详情 3 处。** 样本：`{"t":"只","r":2.6,"cls":"text-xs text-gray-400"}`、`{"t":"生成对账单图片，发给伙伴","r":3.65,"cls":"bg-emerald-600"}`、`{"t":"¥0","r":3.65,"cls":"text-lg font-semibold text-emerald-600"}`、`{"t":"🐕狗","r":3.65,"cls":"flex flex-1 …"}`（emoji 标签页也低于 4.5）。**验收标准：改动后这四个数字都必须是 0。**
+>
+> **写这条探针踩到的两个坑（都不是产品缺陷，记下来免得下次重踩）**：
+> 1. **`HELPERS` 是模板字符串**，里面的正则 `/rgba?\(([^)]+)\)/` 会被吃掉反斜杠变成 `/rgba?(([^)]+))/`，`m[1]` 得到 `"(156, 163, 175"`、`parseFloat` 得 `NaN`，于是 `ratio()` 全是 `NaN`、`NaN < 4.48` 为假，**每个元素都被静默跳过**（伪装成「一处问题都没有」）。探针源码里必须写 `\\(` / `\\)`（同类：`\\d` / `\\s`）。
+> 2. **Tailwind v4 的 `getComputedStyle(...).backgroundColor` 返回 `oklch(...)`**（`bg-gray-900` → `oklch(0.21 0.034 264.665)`），只认 `rgb/rgba` 的解析器会返回 `null`、背景回退成白色，于是「白字在 emerald-600 上」算出 `r: 1`（假数字）。修法：让浏览器自己解析 —— 用 1×1 canvas 的 `fillStyle` + `getImageData` 取 RGBA。
+>
+> 探针自检必须留着：注入一个白底 `#9ca3af` 的元素（应被抓到、约 2.54）与一个白底 `#374151` 的元素（不应被抓到）。**自检不过就说明探针坏了，别拿它的「0 处」当达标证据。**
+
 ---
 
 ### Task 33: 小屏与桌面布局收口
